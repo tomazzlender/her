@@ -67,7 +67,10 @@ Erubi and Phlex; template rendering is rarely your bottleneck.)
 gem "her", github: "tomazzlender/her"
 ```
 
-Requires Ruby >= 3.1. No runtime dependencies.
+Requires Ruby >= 3.1. No hard runtime dependencies: on Ruby 3.3+ HER uses
+the bundled Prism parser to analyze the Ruby inside `{...}` holes; on
+3.1/3.2 add `gem "prism"` to get the same, or HER falls back to a small
+built-in scanner (see Limitations).
 
 ## The two definition forms
 
@@ -170,9 +173,13 @@ for dynamic keys. Bare method calls in holes resolve against your module, so
 ```
 
 Hole results are HTML-escaped unless already trusted (see Escaping). The
-contents are plain Ruby — HER only locates the closing `}` (counting brace
-depth, skipping string literals), it does not parse the Ruby; your expression
-is checked by Ruby itself at load time.
+contents are plain Ruby. With Prism available (Ruby 3.3+), hole code is
+analyzed by the real Ruby parser: invalid expressions fail at load time with
+the parser's own message pointing at the template line, assigns are enforced
+read-only (`{@x = 1}` is a load error), and exotic literals (`%q[}]`,
+regexps, heredocs) terminate holes correctly. A complete `if ... end`
+expression in a hole renders its value; keyword *fragments* are control-flow
+statements (below).
 
 Two brace styles coexist by necessity: `{@x}` is a HER hole; `#{x}` is Ruby's
 own interpolation *inside a Ruby string inside a hole*:
@@ -366,7 +373,8 @@ Where the polish went (§7 of the build spec):
 | Missing assign (contract-free) | `Pages.profile: missing assign :bio (assigns given: :name)` at render |
 | Undeclared `@attr` in a contracted template | load-time error naming the attr, the fix, and the declared set |
 | Malformed template | `components/button.html.her:14:3: mismatched closing tag </div> — expected </span> (opened at ...)` at load |
-| Bad Ruby in a hole | the normal Ruby error, with a backtrace pointing at **the template file and line** (`profile.html.her:3`) |
+| Syntactically invalid Ruby in a hole | load-time error with the parser's message at the template line (Prism), e.g. `invalid Ruby in interpolation: expected an expression after the operator` |
+| Bad Ruby in a hole at runtime (`{@bio.upcase}` on nil) | the normal Ruby error, with a backtrace pointing at **the template file and line** (`profile.html.her:3`) |
 | Unbalanced control flow | load-time `CompileError` naming the component, with a hint |
 
 Generated code is laid out so its line numbers coincide with template line
@@ -453,9 +461,11 @@ consciously:
 
 - **No LiveView.** One-shot rendering only: a component renders to a string,
   the end. No change tracking, no diffing, no client runtime.
-- Hole scanning understands `"…"`/`'…'` strings (including nested `#{}`), but
-  not `%w[]`, regexps, or heredocs — avoid unbalanced braces, quotes, or
-  `@word` inside those within a hole; bigger logic belongs in a helper method.
+- Without Prism (Ruby 3.1/3.2 and no `prism` gem), hole analysis falls back
+  to a scanner that understands `"…"`/`'…'` strings (including nested `#{}`)
+  but not `%w[]`, regexps, or heredocs — on those rubies avoid unbalanced
+  braces, quotes, or `@word` inside such literals within a hole. With Prism
+  this limitation disappears.
 - `__`-prefixed locals (`__buf`, `__slots`, `__inner`) are reserved in holes.
 - Assign keys are symbols.
 - Defaults are static values, frozen at declaration (no lazy/proc defaults).
@@ -469,9 +479,12 @@ consciously:
 .her source ──① tokenize──▶ tokens ──② parse──▶ tree ──③ codegen──▶ Ruby src ──④ module_eval──▶ def self.name(assigns)
 ```
 
-A hand-written scanner (no Temple, no Prism — neither pays its way for
-compile-once one-shot rendering) tokenizes HTML, component/slot tags, and
-holes; a stack parser validates the tree; codegen emits a string-buffer method
+A hand-written scanner (no Temple — its IR pipeline fits indentation
+frontends, not component/slot semantics) tokenizes HTML, component/slot tags,
+and holes; the Ruby inside holes is analyzed with Prism when available —
+exact hole termination, AST-based `@assign` rewriting, load-time syntax
+validation — with a small heuristic scanner as fallback. A stack parser
+validates the tree; codegen emits a string-buffer method
 (`__buf << "static".freeze`, `__buf << Her.safe(expr)`); one `module_eval`
 per template defines the function. Compilation happens once at require time —
 renders never re-parse and never `eval`.

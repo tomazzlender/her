@@ -100,7 +100,7 @@ module Her
       @out << (continue ? " " : "; ") if @line_has_code
       @out << code
       @gen_line += code.count("\n")
-      @line_has_code = true
+      @line_has_code = !code.end_with?("\n")
     end
 
     # Consecutive static output merges into one append; switching to another
@@ -147,9 +147,9 @@ module Her
 
     # -- assign rewriting (§4b) ------------------------------------------------
 
-    def rewrite(code, line)
+    def rewrite(code, line, kind: nil)
       scan_slot_calls(code)
-      RubyScanner.rewrite_assigns(code) do |key|
+      RubyScanner.rewrite_assigns(code, kind: kind) do |key|
         if @mode == :declared
           unless @attrs.key?(key)
             declared = @attrs.keys.map(&:inspect).join(", ")
@@ -163,6 +163,14 @@ module Her
           "::Her.fetch!(assigns, #{key.inspect}, self, #{@name.inspect})"
         end
       end
+    rescue RubyScanner::IvarWriteError => e
+      raise CompileError, "#{label}: #{e.message}#{origin(line)}"
+    end
+
+    # A trailing Ruby comment in hole code would swallow the rest of the
+    # generated line (including our closing parens); a newline ends it.
+    def comment_safe(code)
+      code.include?("#") ? "#{code}\n" : code
     end
 
     # -- tree walking ----------------------------------------------------------
@@ -190,14 +198,14 @@ module Her
 
     def walk_hole(node, buf)
       flush_static
-      code = rewrite(node.code, node.line)
+      code = rewrite(node.code, node.line, kind: node.statement)
       if node.statement
-        emit(code, node.line)
+        emit(comment_safe(code), node.line)
         # `case` must be followed directly by `when`: swallow the
         # whitespace-only text between them (§8.5).
         @swallow_blank_text = true if node.code.strip.match?(/\Acase\b/)
       else
-        emit("#{buf} << ::Her.safe((#{code}))", node.line)
+        emit("#{buf} << ::Her.safe((#{comment_safe(code)}))", node.line)
       end
     end
 
@@ -236,7 +244,7 @@ module Her
           code = value[1]
           assert_expression!(code, attr.line, "attribute `#{attr.name}`")
           flush_static
-          emit("#{buf} << ::Her.attr_pair(#{attr.name.inspect}, (#{rewrite(code, attr.line)}))", attr.line)
+          emit("#{buf} << ::Her.attr_pair(#{attr.name.inspect}, (#{comment_safe(rewrite(code, attr.line))}))", attr.line)
         when :mixed
           _, parts, quote = value
           add_static(" #{attr.name}=#{quote}", attr.line, buf)
@@ -246,7 +254,7 @@ module Her
             else
               assert_expression!(part, attr.line, "attribute `#{attr.name}`")
               flush_static
-              emit("#{buf} << ::Her.safe((#{rewrite(part, attr.line)}))", attr.line)
+              emit("#{buf} << ::Her.safe((#{comment_safe(rewrite(part, attr.line))}))", attr.line)
             end
           end
           add_static(quote, attr.line, buf)
@@ -254,13 +262,19 @@ module Her
           code = value[1]
           assert_expression!(code, attr.line, "attribute splat")
           flush_static
-          emit("#{buf} << ::Her.splat_attrs((#{rewrite(code, attr.line)}))", attr.line)
+          emit("#{buf} << ::Her.splat_attrs((#{comment_safe(rewrite(code, attr.line))}))", attr.line)
         end
       end
     end
 
     def assert_expression!(code, line, where)
-      return unless RubyScanner.statement_kind(code)
+      classification = RubyScanner.classify(code)
+      return if classification.kind.nil?
+      if classification.kind == :invalid
+        raise CompileError,
+              "#{label}: invalid Ruby in #{where}#{origin(line)}: " \
+              "#{classification.messages.join('; ')}"
+      end
       raise CompileError,
             "#{label}: control-flow statements are not allowed in #{where}#{origin(line)} — " \
             "only expressions can appear there"
@@ -335,7 +349,7 @@ module Her
           assert_expression!(value[1], attr.line, "attribute splat")
           segments << "{#{pairs.join(', ')}}" unless pairs.empty?
           pairs = []
-          segments << "((#{rewrite(value[1], attr.line)}) || {})"
+          segments << "((#{comment_safe(rewrite(value[1], attr.line))}) || {})"
         elsif attr.name == "let"
           let_params = parse_let(attr)
         else
@@ -357,7 +371,7 @@ module Her
         string_literal(value[1])
       when :hole
         assert_expression!(value[1], attr.line, "attribute `#{attr.name}`")
-        "(#{rewrite(value[1], attr.line)})"
+        "(#{comment_safe(rewrite(value[1], attr.line))})"
       when :mixed
         inner = value[1].map do |kind, part|
           if kind == :static

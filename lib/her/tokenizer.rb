@@ -87,12 +87,15 @@ module Her
       open_line = @line
       open_col = @col
       take(/\{/)
-      before = @s.pos
-      code = RubyScanner.scan_hole_body(
-        @s,
-        on_eof: -> { fail!("unclosed interpolation `{`", line: open_line, col: open_col) }
-      )
-      advance(@s.string.byteslice(before, @s.pos - before))
+      rest = @s.rest
+      code_length = RubyScanner.hole_code_length(rest)
+      unless code_length
+        fail!("unclosed interpolation `{`", line: open_line, col: open_col)
+      end
+      code = rest.byteslice(0, code_length)
+      @s.pos += code_length + 1 # past the closing `}`
+      advance(code)
+      advance("}")
       code
     end
 

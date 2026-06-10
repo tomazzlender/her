@@ -38,9 +38,14 @@ module Her
         when :text
           parent.children << TextNode.new(value: token.value, line: token.line)
         when :hole
+          classification = RubyScanner.classify(token.code)
+          if classification.kind == :invalid
+            fail!("invalid Ruby in interpolation: #{classification.messages.join('; ')}",
+                  token.line, token.col)
+          end
           parent.children << HoleNode.new(
             code: token.code, line: token.line,
-            statement: RubyScanner.statement_kind(token.code)
+            statement: classification.kind
           )
         when :tag_open
           node = build_node(token, parent)
