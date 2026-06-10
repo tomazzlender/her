@@ -9,7 +9,8 @@ module Her
   # header). Compiler evals it with `lineno = first_line - 1`, which makes
   # every Ruby backtrace and SyntaxError point at the author's template line.
   class Codegen
-    def initialize(tree, name:, mode:, attrs: nil, module_label: nil, file: nil, first_line: 1)
+    def initialize(tree, name:, mode:, attrs: nil, module_label: nil, file: nil, first_line: 1,
+                   strict_html: false)
       @tree = tree
       @name = name
       @mode = mode # :declared (component with attrs) or :free (§3c)
@@ -26,6 +27,13 @@ module Her
       @static_buf = nil
       @var_serial = 0
       @swallow_blank_text = false
+      # Output buffers as a stack: lambda bodies and capture holes redirect
+      # emission for the code between their open and close.
+      @buf_stack = ["__buf"]
+      # Open statements in the current body; capture frames carry their
+      # buffer so the matching {end} closes both the block and the call.
+      @stmt_stack = []
+      validate_strict_html!(@tree) if strict_html
       trim_tree!(@tree)
       @uses_slots = tree_uses_slots?(@tree)
       @annotate = Her.debug_annotations
@@ -55,7 +63,7 @@ module Her
     # body starts on line 2 == template line 1.
     def generate
       @out << header << "\n"
-      walk_children(@tree.children, "__buf")
+      walk_children(@tree.children)
       flush_static
       @out << "\n" unless @out.end_with?("\n")
       @out << "__buf << #{string_literal("<!-- </#{label}> -->")}.freeze\n" if @annotate
@@ -98,6 +106,73 @@ module Her
         parts << "__buf << #{string_literal("<!-- <#{label}> #{origin_label} -->")}.freeze"
       end
       parts.join("; ")
+    end
+
+    # -- strict HTML mode (§8.1 opt-in) --------------------------------------------
+    # By default control-flow holes are transparent to tag balancing, which
+    # allows conditional wrappers but also templates that emit unbalanced
+    # HTML at runtime. strict_html requires statements to balance *within*
+    # every element/component/slot body — the HEEx guarantee: a compiled
+    # template cannot cut an element with a branch boundary.
+
+    def validate_strict_html!(node, where = "the template body")
+      case node
+      when Parser::Root
+        check_statement_nesting!(node.children, where)
+        node.children.each { |child| validate_strict_html!(child, where) }
+      when Parser::ElementNode
+        inner = "<#{node.name}>"
+        check_statement_nesting!(node.children, inner)
+        node.children.each { |child| validate_strict_html!(child, inner) }
+      when Parser::ComponentNode
+        inner = "the children of <.#{node.name}>"
+        check_statement_nesting!(node.children, inner)
+        node.children.each { |child| validate_strict_html!(child, inner) }
+        node.slot_defs.each do |slot_name, defs|
+          defs.each do |slot_def|
+            slot_where = "slot <:#{slot_name}>"
+            check_statement_nesting!(slot_def.children, slot_where)
+            slot_def.children.each { |child| validate_strict_html!(child, slot_where) }
+          end
+        end
+      when Parser::SlotRenderNode
+        inner = "the fallback of <:#{node.name}>"
+        check_statement_nesting!(node.children, inner)
+        node.children.each { |child| validate_strict_html!(child, inner) }
+      end
+    end
+
+    def check_statement_nesting!(children, where)
+      depth = 0
+      children.each do |child|
+        next unless child.is_a?(Parser::HoleNode) && child.statement
+        snippet = "{#{child.code.strip}}"
+        case child.statement
+        when :open, :block, :capture
+          depth += 1
+        when :mid
+          if depth.zero?
+            strict_error!("#{snippet} continues a statement opened outside #{where}", child.line)
+          end
+        when :end
+          if depth.zero?
+            strict_error!("#{snippet} closes a statement opened outside #{where}", child.line)
+          end
+          depth -= 1
+        end
+      end
+      return if depth.zero?
+      last_open = children.reverse.find do |child|
+        child.is_a?(Parser::HoleNode) && %i[open block capture].include?(child.statement)
+      end
+      strict_error!("{#{last_open.code.strip}} is not closed within #{where}", last_open.line)
+    end
+
+    def strict_error!(message, line)
+      raise CompileError,
+            "#{label}: strict_html — #{message}#{origin(line)}; control flow must be " \
+            "fully nested within each element (the conditional-wrapper pattern is " \
+            "disallowed in strict mode)"
     end
 
     # -- statement-line trimming -------------------------------------------------
@@ -185,14 +260,18 @@ module Her
 
     # Consecutive static output merges into one append; switching to another
     # buffer (entering/leaving a lambda body) flushes first.
-    def add_static(str, line, buf)
+    def add_static(str, line)
       return if str.empty?
-      flush_static if @static_buf && @static_buf != buf
+      flush_static if @static_buf && @static_buf != current_buf
       if @static.empty?
         @static_line = line
-        @static_buf = buf
+        @static_buf = current_buf
       end
       @static << str
+    end
+
+    def current_buf
+      @buf_stack.last
     end
 
     def flush_static
@@ -255,94 +334,125 @@ module Her
 
     # -- tree walking ----------------------------------------------------------
 
-    def walk_children(children, buf)
+    def walk_children(children)
       children.each do |child|
         next if @swallow_blank_text && child.is_a?(Parser::TextNode) && child.value.strip.empty?
         @swallow_blank_text = false
-        walk(child, buf)
+        walk(child)
       end
     end
 
-    def walk(node, buf)
+    def walk(node)
       case node
-      when Parser::TextNode       then add_static(node.value, node.line, buf)
-      when Parser::HoleNode       then walk_hole(node, buf)
-      when Parser::ElementNode    then walk_element(node, buf)
-      when Parser::ComponentNode  then walk_component(node, buf)
-      when Parser::SlotRenderNode then walk_slot_render(node, buf)
+      when Parser::TextNode       then add_static(node.value, node.line)
+      when Parser::HoleNode       then walk_hole(node)
+      when Parser::ElementNode    then walk_element(node)
+      when Parser::ComponentNode  then walk_component(node)
+      when Parser::SlotRenderNode then walk_slot_render(node)
       when Parser::SlotDefNode
         raise CompileError,
               "#{label}: slot <:#{node.name}> must be a direct child of a component call#{origin(node.line)}"
       end
     end
 
-    def walk_hole(node, buf)
+    def walk_hole(node)
       flush_static
-      code = rewrite(node.code, node.line, kind: node.statement)
-      if node.statement
+      case node.statement
+      when nil
+        code = rewrite(node.code, node.line)
+        emit("#{current_buf} << ::Her.safe((#{comment_safe(code)}))", node.line)
+      when :capture
+        walk_capture(node)
+      when :end
+        walk_statement_end(node)
+      else
+        @stmt_stack.push(:plain) if node.statement == :open || node.statement == :block
+        code = rewrite(node.code, node.line, kind: node.statement)
         emit(comment_safe(code), node.line)
         # `case` must be followed directly by `when`: swallow the
         # whitespace-only text between them (§8.5).
         @swallow_blank_text = true if node.code.strip.match?(/\Acase\b/)
+      end
+    end
+
+    # `{= helper(...) do |x|}` — the children build a sub-buffer the block
+    # returns, and the helper's result is appended: capture semantics, for
+    # form-builder-style helpers that wrap their block's content (§8.5+).
+    def walk_capture(node)
+      inner = node.code.strip.sub(/\A=\s*/, "")
+      code = rewrite(inner, node.line, kind: :block)
+      capture_buf = fresh_var("__buf")
+      emit("#{current_buf} << ::Her.safe(#{comment_safe(code)}", node.line)
+      emit("#{capture_buf} = +''", node.line)
+      @buf_stack.push(capture_buf)
+      @stmt_stack.push(capture_buf)
+    end
+
+    def walk_statement_end(node)
+      frame = @stmt_stack.pop
+      if frame && frame != :plain
+        emit("::Her::Safe.new(#{frame})", node.line)
+        emit("end)", node.line, continue: true)
+        @buf_stack.pop
       else
-        emit("#{buf} << ::Her.safe((#{comment_safe(code)}))", node.line)
+        emit(comment_safe(rewrite(node.code, node.line, kind: :end)), node.line)
       end
     end
 
     # -- plain HTML elements ----------------------------------------------------
 
-    def walk_element(node, buf)
-      add_static("<#{node.name}", node.line, buf)
-      emit_element_attrs(node, buf)
+    def walk_element(node)
+      add_static("<#{node.name}", node.line)
+      emit_element_attrs(node)
       if node.void
-        add_static(node.self_closing ? "/>" : ">", node.line, buf)
+        add_static(node.self_closing ? "/>" : ">", node.line)
       elsif node.self_closing
-        add_static("></#{node.name}>", node.line, buf)
+        add_static("></#{node.name}>", node.line)
       else
-        add_static(">", node.line, buf)
-        walk_children(node.children, buf)
-        add_static("</#{node.name}>", node.end_line, buf)
+        add_static(">", node.line)
+        walk_children(node.children)
+        add_static("</#{node.name}>", node.end_line)
       end
     end
 
-    def emit_element_attrs(node, buf)
+    def emit_element_attrs(node)
       node.attrs.each do |attr|
         value = attr.value
         if value.nil?
-          add_static(" #{attr.name}", attr.line, buf)
+          add_static(" #{attr.name}", attr.line)
           next
         end
         case value[0]
         when :static
           _, text, quote = value
           if quote
-            add_static(" #{attr.name}=#{quote}#{text}#{quote}", attr.line, buf)
+            add_static(" #{attr.name}=#{quote}#{text}#{quote}", attr.line)
           else
-            add_static(" #{attr.name}=#{text}", attr.line, buf)
+            add_static(" #{attr.name}=#{text}", attr.line)
           end
         when :hole
           code = value[1]
           assert_expression!(code, attr.line, "attribute `#{attr.name}`")
           flush_static
-          emit("#{buf} << ::Her.attr_pair(#{attr.name.inspect}, (#{comment_safe(rewrite(code, attr.line))}))", attr.line)
+          emit("#{current_buf} << ::Her.attr_pair(#{attr.name.inspect}, (#{comment_safe(rewrite(code, attr.line))}))", attr.line)
         when :mixed
           _, parts, quote = value
-          add_static(" #{attr.name}=#{quote}", attr.line, buf)
+          add_static(" #{attr.name}=#{quote}", attr.line)
           parts.each do |kind, part|
             if kind == :static
-              add_static(part, attr.line, buf)
+              add_static(part, attr.line)
             else
               assert_expression!(part, attr.line, "attribute `#{attr.name}`")
               flush_static
-              emit("#{buf} << ::Her.safe((#{comment_safe(rewrite(part, attr.line))}))", attr.line)
+              emit("#{current_buf} << ::Her.safe((#{comment_safe(rewrite(part, attr.line))}))", attr.line)
             end
           end
-          add_static(quote, attr.line, buf)
+          add_static(quote, attr.line)
         when :splat
           code = value[1]
           assert_expression!(code, attr.line, "attribute splat")
           flush_static
-          emit("#{buf} << ::Her.splat_attrs((#{comment_safe(rewrite(code, attr.line))}))", attr.line)
+          emit("#{current_buf} << ::Her.splat_attrs((#{comment_safe(rewrite(code, attr.line))}))", attr.line)
         end
       end
     end
@@ -377,12 +487,12 @@ module Her
 
     # -- component calls (§6) ----------------------------------------------------
 
-    def walk_component(node, buf)
+    def walk_component(node)
       record_call(node)
       flush_static
       receiver = node.kind == :local ? "self.#{node.name}" : node.name
       let_params, args = component_args(node)
-      emit("#{buf} << ::Her.safe(#{receiver}(#{args}", node.line)
+      emit("#{current_buf} << ::Her.safe(#{receiver}(#{args}", node.line)
 
       emit_slot_defs(node) if node.slot_defs.any?
 
@@ -521,14 +631,22 @@ module Her
     def emit_lambda_body(children, start_line, end_line)
       lambda_buf = fresh_var("__buf")
       emit("#{lambda_buf} = +''", start_line)
-      walk_children(children, lambda_buf)
+      # Statements (and captures) cannot cross a lambda boundary: give the
+      # body fresh stacks and restore around it.
+      buf_depth = @buf_stack.size
+      outer_stmts = @stmt_stack
+      @stmt_stack = []
+      @buf_stack.push(lambda_buf)
+      walk_children(children)
       flush_static
+      @buf_stack.slice!(buf_depth..)
+      @stmt_stack = outer_stmts
       emit("::Her::Safe.new(#{lambda_buf})", end_line)
     end
 
     # -- slot rendering -----------------------------------------------------------
 
-    def walk_slot_render(node, buf)
+    def walk_slot_render(node)
       @rendered_slot_names << node.name.to_sym
       flush_static
       node.attrs.each do |attr|
@@ -537,13 +655,13 @@ module Her
               "use {render_slot(#{node.name.to_sym.inspect}, args...)} to pass arguments"
       end
       if node.children.empty?
-        emit("#{buf} << ::Her.render_slot(__slots, #{node.name.to_sym.inspect}).to_s", node.line)
+        emit("#{current_buf} << ::Her.render_slot(__slots, #{node.name.to_sym.inspect}).to_s", node.line)
       else
         slot_var = fresh_var("__slot")
         emit("if (#{slot_var} = ::Her.render_slot(__slots, #{node.name.to_sym.inspect}))", node.line)
-        emit("#{buf} << #{slot_var}.to_s", node.line)
+        emit("#{current_buf} << #{slot_var}.to_s", node.line)
         emit("else", node.line)
-        walk_children(node.children, buf)
+        walk_children(node.children)
         flush_static
         emit("end", node.end_line)
       end

@@ -32,7 +32,7 @@ module Her
     # required attrs are enforced at render time and referencing an
     # undeclared @attr is a load-time error. With no attrs declared the
     # component is contract-free, exactly like embed_templates (§3c).
-    def component(name, dir: nil, &block)
+    def component(name, dir: nil, strict_html: nil, &block)
       name = validate_component_name!(name)
       caller_loc = caller_locations(1, 1).first
 
@@ -57,7 +57,8 @@ module Her
 
       __her_guard_collision!(name, "component #{name.inspect}")
       Compiler.define(self, name, source, origin: origin, attrs: builder.__attrs,
-                                          kind: :component, template_path: template_path)
+                                          kind: :component, template_path: template_path,
+                                          strict_html: strict_html.nil? ? Her.strict_html : strict_html)
     end
 
     # Defines one contract-free function per file matching +glob+ (§3b),
@@ -65,7 +66,7 @@ module Her
     # The glob is relative to the calling file's directory unless `dir:`
     # is given. Files whose name was already taken by an explicit
     # `component` are skipped — explicit wins (§3d).
-    def embed_templates(glob, dir: nil)
+    def embed_templates(glob, dir: nil, strict_html: nil)
       caller_loc = caller_locations(1, 1).first
       base = dir || File.dirname(caller_loc.absolute_path || caller_loc.path)
       paths = Dir.glob(File.expand_path(glob, base)).sort
@@ -87,7 +88,8 @@ module Her
 
         __her_guard_collision!(name, "template file #{path}")
         Compiler.define(self, name, File.read(path), origin: { file: path, first_line: 1 },
-                                                     attrs: nil, kind: :embed, template_path: path)
+                                                     attrs: nil, kind: :embed, template_path: path,
+                                                     strict_html: strict_html.nil? ? Her.strict_html : strict_html)
       end
     end
 

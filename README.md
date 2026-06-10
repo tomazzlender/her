@@ -334,10 +334,24 @@ Lines that contain only statement holes are trimmed from the output —
 the `{each do}` / `{end}` lines above leave no blank lines behind. A
 statement sharing its line with content leaves the line untouched.
 
+For *capture-style* helpers — ones that wrap their block's content and
+return the combined markup, like form builders — plain statements would
+discard the helper's return value. The capture form `{= ... do}` appends it:
+
+```her
+{= form_for(@user) do |f|}
+  <label>{f.label :name}</label>
+{end}
+```
+
+The children build the string the block returns; the helper's result is
+escaped-or-trusted like any hole. Blocks bind arguments (`do |f|`) as usual.
+
 Rules worth knowing:
 
 - A hole is a statement when it *starts with* a control-flow keyword or *ends
-  with* `do |...|`. Everything else is an expression hole, including trailing
+  with* `do |...|`; a hole starting with `=` and ending with a block opener
+  is a capture. Everything else is an expression hole, including trailing
   conditionals like `{@name if @show}`.
 - Control flow must balance within a component/slot body (children compile to
   a lambda; an `{if}` outside can't close inside). Unbalanced flow is caught
@@ -361,6 +375,14 @@ Rules worth knowing:
 
   For output that genuinely can't balance lexically, `{raw(...)}` is the
   escape hatch — raw markup bypasses tag validation entirely.
+
+  The flip side of that flexibility: lexical balance can't prove the
+  *output* balances (`{if @a}<div>{end}` paired with `{if @b}</div>{end}`
+  compiles, and misrenders when `a != b`). If you want HEEx's guarantee,
+  opt into strict mode — `component :x, strict_html: true do ... end`,
+  `embed_templates "...", strict_html: true`, or globally
+  `Her.strict_html = true` — which requires control flow to nest fully
+  within each element and rejects conditional wrappers at load time.
 - `<div/>` on a non-void element expands to `<div></div>` (a browser would
   treat the slash as noise otherwise). Void elements (`<br>`, `<img>`, ...)
   take no closing tag, and `</br>` is an error.
@@ -514,7 +536,7 @@ consciously:
 
 | HEEx pain point | HER's answer |
 |---|---|
-| Strict HTML validation rejects conditional wrapper elements | Tags must balance lexically, but control-flow holes are transparent to balancing — conditional wrappers just work; `{raw(...)}` remains for true edge cases |
+| Strict HTML validation rejects conditional wrapper elements | Tags must balance lexically, but control-flow holes are transparent to balancing — conditional wrappers just work; `{raw(...)}` remains for true edge cases, and `strict_html:` opts back into the HEEx guarantee |
 | No partial attribute interpolation (`class="x-{@y}"`) | Supported |
 | `{` breaks JS/CSS in `<script>`/`<style>` | Interpolation off by default there; `her-interpolate` opts in, `her-no-curly` opts out anywhere |
 | Two brace meanings (`{...}` vs `#{...}`) | Inherent to the sigil; documented above |

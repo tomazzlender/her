@@ -41,8 +41,9 @@ module Her
       end
     end
 
-    # kind: nil (expression), :open/:mid/:end/:block (statement), or
-    # :invalid (Prism engine only) with the parser's messages.
+    # kind: nil (expression), :open/:mid/:end/:block (statement), :capture
+    # (`{= helper do |x|}` — block result appended), or :invalid with the
+    # parser's messages.
     Classification = Struct.new(:kind, :messages)
 
     IVAR = /@[a-zA-Z_][a-zA-Z0-9_]*/
@@ -113,6 +114,17 @@ module Her
     # invalid and reported with the parser's message.
     def classify(code)
       stripped = code.strip
+      # `{= helper(...) do |x|}` — capture: the block builds the children
+      # and the helper's RETURN VALUE is appended (Rails-style capture
+      # semantics, which plain statement holes cannot express).
+      if stripped.start_with?("=") && !stripped.match?(/\A==|\A=~/)
+        inner = stripped[1..].strip
+        if inner.match?(BLOCK_TAIL)
+          return Classification.new(:capture, nil)
+        end
+        return Classification.new(:invalid,
+                                  ["a capture hole `{= ... }` must end with a block opener (`do` or `do |args|`)"])
+      end
       return Classification.new(:end, nil) if stripped.match?(STMT_END)
       return Classification.new(:mid, nil) if stripped.match?(STMT_MID)
 

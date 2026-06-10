@@ -190,7 +190,8 @@ module Her
           path = meta[:template_path] or next
           Compiler.define(mod, name, File.read(path),
                           origin: { file: path, first_line: 1 },
-                          attrs: meta[:attrs], kind: meta[:kind], template_path: path)
+                          attrs: meta[:attrs], kind: meta[:kind], template_path: path,
+                          strict_html: meta[:strict_html])
           count += 1
         end
       end
@@ -203,6 +204,10 @@ module Her
     # time: set it before requiring your component modules (or call
     # Her.reload_templates! after toggling).
     attr_accessor :debug_annotations
+
+    # Global default for HEEx-style strict HTML validation (statements must
+    # nest fully within elements). Per-definition strict_html: overrides.
+    attr_accessor :strict_html
 
     private
 

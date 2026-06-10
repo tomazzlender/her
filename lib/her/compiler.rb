@@ -12,7 +12,8 @@ module Her
     #   so errors and backtraces point at the author's source.
     # attrs: declared attr metadata ({name => {required:, default:}}) for the
     #   contract tier, or nil for contract-free templates (§3c).
-    def define(mod, name, source, origin:, attrs: nil, kind: :component, template_path: nil)
+    def define(mod, name, source, origin:, attrs: nil, kind: :component, template_path: nil,
+               strict_html: false)
       file = origin.fetch(:file)
       first_line = origin.fetch(:first_line, 1)
       label = Her.module_label(mod)
@@ -26,7 +27,8 @@ module Her
         attrs: attrs,
         module_label: label,
         file: file,
-        first_line: first_line
+        first_line: first_line,
+        strict_html: strict_html
       )
       generated = codegen.generate
 
@@ -50,6 +52,7 @@ module Her
         attrs: attrs,
         # set for file-based templates; Her.reload_templates! recompiles them
         template_path: template_path,
+        strict_html: strict_html,
         defaults: attrs ? attrs.filter_map { |k, o| [k, o[:default]] if o.key?(:default) }.to_h.freeze : nil,
         # precomputed [[key, type, values], ...] for the render-time guard
         attr_checks: attrs&.filter_map { |k, o|
