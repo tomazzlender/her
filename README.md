@@ -361,6 +361,7 @@ Where the polish went (§7 of the build spec):
 
 | Failure | What you get |
 |---|---|
+| Typo'd component / missing required attr / unknown slot at a call site | boot-time error from `Her.verify!`, with did-you-mean (next section) |
 | Missing required attr | `UI.button: missing required attribute :label` at render |
 | Missing assign (contract-free) | `Pages.profile: missing assign :bio (assigns given: :name)` at render |
 | Undeclared `@attr` in a contracted template | load-time error naming the attr, the fix, and the declared set |
@@ -376,6 +377,64 @@ the compiler produced:
 ```ruby
 puts Her.generated_source(UI, :button)
 ```
+
+## Boot-time call-site verification
+
+HEEx verifies component call sites while your project compiles. Ruby has no
+after-compile hook, so HER does the next best thing: every template records
+its component calls at compile time, and `Her.verify!` checks them all once
+the application has finished loading:
+
+```ruby
+# in the test suite — effectively compile-time, since CI fails the build:
+def test_components_verify = Her.verify!
+
+# or after boot in Rails:
+config.after_initialize { Her.verify! unless Rails.env.production? }
+```
+
+With no arguments it verifies every module that extended `Her::Component`
+(pass modules to narrow it). All failures are reported at once:
+
+```
+Her::VerifyError: 3 component verification failures
+  [error] app/views/ui.rb:14: UI.card: calls <.buttom/>, which is not defined — did you mean <.button/>?
+  [error] app/views/ui.rb:15: UI.card: calls <.button/> without its required attr :label
+  [error] app/views/ui.rb:24: UI.page: passes slot <:side> to <.plain/>, which never renders it
+```
+
+What it checks, with what is statically knowable:
+
+- **the callee exists** — typo'd `<.buttom/>` and unresolvable `<Mod.func/>`
+  constants become boot errors with did-you-mean suggestions, instead of
+  render-time `NoMethodError`s;
+- **required attrs are provided** (contract-tier callees) — skipped when the
+  call has a `{...}` splat, which could supply them at runtime;
+- **no undeclared attrs are passed** (contract-tier callees) — a warning by
+  default, since renders deliberately allow extra assigns through; raise or
+  silence it with `undeclared_attrs: :error | :ignore`;
+- **no unknown slots are passed** — a `<:side>` definition (or children, for
+  the `:inner` slot) given to a component that never renders that slot would
+  silently drop content, so it's an error; tune with `unknown_slots:`.
+
+`Her.verify` (non-bang) returns the issue list instead of printing/raising,
+for custom policies.
+
+Soundness limits, stated plainly: attr names are always statically known in
+HER, but a splat opens the attr set, and a `render_slot(expr)` with a dynamic
+name opens the callee's slot set — both suppress the affected checks for that
+call. Slot rendering routed through helper methods (`{my_helper_that_calls_render_slot}`)
+isn't statically visible either; downgrade `unknown_slots:` if you do that.
+Contract-free callees get existence checks only — a template's `@x` references
+can't soundly serve as an implicit contract because references inside `{if}`
+branches are conditionally required. Verification is one more reason to
+declare attrs.
+
+Why not verify when each template compiles? Ordering: `<.button/>` may be
+defined later in the same module, in a file required later, or be the
+component itself (recursion) — all legitimate. Phoenix defers verification to
+the end of module compilation for the same reason; HER defers to the explicit
+call, which is the Ruby-idiomatic finalize step.
 
 ## Design decisions vs HEEx's known pain points
 

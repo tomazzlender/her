@@ -58,6 +58,19 @@ module Her
   # Raised when render_slot/slot? is called outside of a component render.
   class SlotError < Error; end
 
+  # Raised by Her.verify! when cross-component call-site verification finds
+  # errors. Carries every failure so a sweep is one fix cycle.
+  class VerifyError < Error
+    attr_reader :issues
+
+    def initialize(issues)
+      @issues = issues
+      noun = issues.size == 1 ? "failure" : "failures"
+      super("#{issues.size} component verification #{noun}\n" +
+            issues.map { |issue| "  [#{issue.severity}] #{issue}" }.join("\n"))
+    end
+  end
+
   # @api private
   def self.module_label(mod)
     mod.name || mod.inspect

@@ -19,7 +19,7 @@ module Her
 
       tokens = Tokenizer.new(source, file: file, first_line: first_line).tokenize
       tree = Parser.new(tokens, file: file, first_line: first_line).parse
-      generated = Codegen.new(
+      codegen = Codegen.new(
         tree,
         name: name,
         mode: attrs ? :declared : :free,
@@ -27,7 +27,8 @@ module Her
         module_label: label,
         file: file,
         first_line: first_line
-      ).generate
+      )
+      generated = codegen.generate
 
       # Redefinition of a HER-defined component (collision rule §3d, code
       # reload) is intentional; drop the old method to avoid the warning.
@@ -50,7 +51,11 @@ module Her
         defaults: attrs ? attrs.filter_map { |k, o| [k, o[:default]] if o.key?(:default) }.to_h.freeze : nil,
         file: file,
         first_line: first_line,
-        generated_source: generated
+        generated_source: generated,
+        # call-site metadata consumed by Her.verify
+        calls: codegen.calls,
+        rendered_slots: codegen.rendered_slots,
+        dynamic_slot_render: codegen.dynamic_slot_render?
       }
       name
     end

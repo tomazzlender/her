@@ -5,6 +5,12 @@ module Her
   # `component` and `embed_templates`; both compile templates into public
   # module functions taking a single assigns hash (§4a).
   module Component
+    # Track extending modules so Her.verify! with no arguments can check
+    # every component module in the application.
+    def self.extended(mod)
+      Her.__register_component_module(mod)
+    end
+
     NAME_FORMAT = /\A[a-z_][a-zA-Z0-9_]*\z/
     RUBY_KEYWORDS = %w[
       alias and begin break case class def defined? do else elsif end ensure

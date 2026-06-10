@@ -27,6 +27,26 @@ module Her
       @var_serial = 0
       @swallow_blank_text = false
       @uses_slots = tree_uses_slots?(@tree)
+
+      # Call-site metadata for Her.verify, collected while walking (§ verify).
+      @calls = []
+      @rendered_slot_names = []
+      @dynamic_slot_render = false
+    end
+
+    # Component calls this template makes, for boot-time verification.
+    attr_reader :calls
+
+    # Slot names this template renders (via <:name/> tags and literal
+    # render_slot/slot? calls in holes).
+    def rendered_slots
+      @rendered_slot_names.uniq
+    end
+
+    # True when a render_slot/slot? call with a non-literal name was seen —
+    # the rendered-slot set is then open and slot checks must be skipped.
+    def dynamic_slot_render?
+      @dynamic_slot_render
     end
 
     # Returns the full generated source. Line 1 is the header; the method
@@ -128,6 +148,7 @@ module Her
     # -- assign rewriting (§4b) ------------------------------------------------
 
     def rewrite(code, line)
+      scan_slot_calls(code)
       RubyScanner.rewrite_assigns(code) do |key|
         if @mode == :declared
           unless @attrs.key?(key)
@@ -245,9 +266,25 @@ module Her
             "only expressions can appear there"
     end
 
+    # Every hole's code passes through rewrite, so this sees all slot usage.
+    # First arg shapes: `:sym` is a literal name; bare/empty-paren calls
+    # render :inner; anything else makes the rendered-slot set dynamic.
+    def scan_slot_calls(code)
+      code.scan(/\b(?:render_slot|slot\?)\s*(?:\(\s*([^,)\s]+)?)?/) do |arg,|
+        if arg.nil?
+          @rendered_slot_names << :inner
+        elsif arg.match?(/\A:[a-zA-Z_]\w*\z/)
+          @rendered_slot_names << arg[1..].to_sym
+        else
+          @dynamic_slot_render = true
+        end
+      end
+    end
+
     # -- component calls (§6) ----------------------------------------------------
 
     def walk_component(node, buf)
+      record_call(node)
       flush_static
       receiver = node.kind == :local ? "self.#{node.name}" : node.name
       let_params, args = component_args(node)
@@ -262,6 +299,26 @@ module Her
       else
         emit("))", node.end_line, continue: true)
       end
+    end
+
+    # Record what is statically knowable about a component call: attr names
+    # are always literal in HER (only values vary), a splat makes the attr
+    # set open-ended, and children count as passing the :inner slot.
+    def record_call(node)
+      attrs = []
+      splat = false
+      node.attrs.each do |attr|
+        value = attr.value
+        if value.is_a?(Array) && value[0] == :splat
+          splat = true
+        elsif attr.name != "let"
+          attrs << attr.name.to_sym
+        end
+      end
+      slots = node.slot_defs.keys
+      slots += [:inner] if node.children.any?
+      @calls << { kind: node.kind, name: node.name, attrs: attrs, splat: splat,
+                  slots: slots, line: node.line }
     end
 
     # Returns [let_params_or_nil, args_hash_source]. Splat attributes split
@@ -376,6 +433,7 @@ module Her
     # -- slot rendering -----------------------------------------------------------
 
     def walk_slot_render(node, buf)
+      @rendered_slot_names << node.name.to_sym
       flush_static
       node.attrs.each do |attr|
         raise CompileError,
