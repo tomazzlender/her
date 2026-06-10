@@ -233,6 +233,123 @@ class VerifyTest < Minitest::Test
     assert_empty Her.verify(mod)
   end
 
+  # -- literal type/values checks ------------------------------------------------
+
+  def typed_mod(&caller_block)
+    component_module do
+      component :badge do
+        attr :count, :integer, required: true
+        attr :kind, :string, values: %w[low high]
+        attr :on, :boolean, default: false
+        template "<b>{@count}{@kind}{@on}</b>"
+      end
+      module_eval(&caller_block)
+    end
+  end
+
+  def test_literal_string_to_integer_attr_is_an_error
+    mod = typed_mod do
+      component :bar do
+        template %(<.badge count="5"/>)
+      end
+    end
+    issue = Her.verify(mod).first
+    assert_equal :attr_type, issue.type
+    assert issue.error?
+    assert_match(/passes "5" to attr :count of <\.badge\/>, declared :integer/, issue.message)
+  end
+
+  def test_bare_attr_to_non_boolean_is_an_error
+    mod = typed_mod do
+      component :bar do
+        template "<.badge count={@n} kind/>"
+      end
+    end
+    issue = Her.verify(mod).first
+    assert_equal :attr_type, issue.type
+    assert_match(/passes true to attr :kind/, issue.message)
+  end
+
+  def test_interpolated_attr_is_type_checked_as_string
+    mod = typed_mod do
+      component :bar do
+        template %(<.badge count="n-{@n}"/>)
+      end
+    end
+    issue = Her.verify(mod).first
+    assert_equal :attr_type, issue.type
+    assert_match(/passes an interpolated String to attr :count/, issue.message)
+  end
+
+  def test_interpolated_attr_satisfies_string_type
+    mod = typed_mod do
+      component :bar do
+        template %(<.badge count={@n} kind="k-{@x}"/>)
+      end
+    end
+    assert_empty Her.verify(mod)
+  end
+
+  def test_literal_outside_values_is_an_error
+    mod = typed_mod do
+      component :bar do
+        template %(<.badge count={@n} kind="High"/>)
+      end
+    end
+    issue = Her.verify(mod).first
+    assert_equal :attr_value, issue.type
+    assert_match(/passes "High" to attr :kind .* allowed values: "low", "high"/, issue.message)
+  end
+
+  def test_literal_within_values_and_dynamic_holes_are_clean
+    mod = typed_mod do
+      component :bar do
+        template %(<.badge count={@n} kind="low"/><.badge count={@n} kind={@k}/>)
+      end
+    end
+    assert_empty Her.verify(mod)
+  end
+
+  def test_bare_attr_to_boolean_is_clean
+    mod = typed_mod do
+      component :bar do
+        template "<.badge count={@n} on/>"
+      end
+    end
+    assert_empty Her.verify(mod)
+  end
+
+  # -- :global interplay ------------------------------------------------------------
+
+  def test_global_attr_silences_undeclared_warnings
+    mod = component_module do
+      component :button do
+        attr :label, :string, required: true
+        attr :rest, :global
+        template "<button {@rest}>{@label}</button>"
+      end
+      component :bar do
+        template %(<.button label="x" data-id="1" hidden/>)
+      end
+    end
+    assert_empty Her.verify(mod)
+  end
+
+  def test_literal_to_global_attr_is_a_type_error
+    mod = component_module do
+      component :button do
+        attr :rest, :global
+        template "<button {@rest}></button>"
+      end
+      component :bar do
+        template %(<.button rest="oops"/>)
+      end
+    end
+    issue = Her.verify(mod).first
+    assert_equal :attr_type, issue.type
+    assert_match(/declared :global/, issue.message)
+  end
+
   # -- slot checks --------------------------------------------------------------------
 
   def test_unknown_named_slot_is_an_error

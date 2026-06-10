@@ -49,6 +49,11 @@ module Her
         kind: kind,
         attrs: attrs,
         defaults: attrs ? attrs.filter_map { |k, o| [k, o[:default]] if o.key?(:default) }.to_h.freeze : nil,
+        # precomputed [[key, type, values], ...] for the render-time guard
+        attr_checks: attrs&.filter_map { |k, o|
+          type = o[:type] unless [:any, :global].include?(o[:type])
+          [k, type, o[:values]].freeze if type || o[:values]
+        }&.freeze,
         file: file,
         first_line: first_line,
         generated_source: generated,

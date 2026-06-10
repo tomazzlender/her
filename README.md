@@ -133,6 +133,34 @@ override the base directory.
   with a message telling you what to declare. A `component` block with no
   `attr` declarations stays contract-free.
 
+  Attrs can also declare a type, allowed values, and a `:global` collector:
+
+  ```ruby
+  component :badge do
+    attr :count, :integer, required: true
+    attr :kind,  :string, values: %w[low high], default: "low"
+    attr :at,    Time                      # any Class/Module works as a type
+    attr :rest,  :global                   # collects undeclared assigns
+    template %q(<span {@rest} data-kind={@kind}>{@count}</span>)
+  end
+  ```
+
+  Types: `:any` (default), `:string`, `:symbol`, `:boolean`, `:integer`,
+  `:float`, `:numeric`, `:array`, `:hash`, `:proc`, `:global`, or a
+  Class/Module. A wrong type or a value outside `values:` raises
+  `Her::InvalidAttr` at render — and literal values at call sites are
+  checked at boot by `Her.verify!`. `nil` is exempt (it means "absent"), and
+  so is `false` for non-boolean attrs — the `attr={@x && "v"}` omit idiom
+  stays legal. Declarations are validated too: defaults must satisfy the
+  type and be among `values:`, and `values:` must match the type.
+
+  The `:global` attr (one per component) collects every assign the caller
+  passes that isn't otherwise declared — the passthrough pattern for
+  `<div {@rest}>`. A default acts as the base the collected attrs override,
+  so global attrs chain naturally through `<.button aria-label="x"/>` →
+  `{@rest}` splats. Declaring one also tells `Her.verify!` that undeclared
+  attrs at call sites are expected.
+
 ### Collision rule
 
 If a glob and an explicit `component` would define the same name, **explicit
@@ -375,8 +403,9 @@ Where the polish went (§7 of the build spec):
 
 | Failure | What you get |
 |---|---|
-| Typo'd component / missing required attr / unknown slot at a call site | boot-time error from `Her.verify!`, with did-you-mean (next section) |
+| Typo'd component / missing required attr / wrong-typed literal / unknown slot at a call site | boot-time error from `Her.verify!`, with did-you-mean (next section) |
 | Missing required attr | `UI.button: missing required attribute :label` at render |
+| Wrong type / disallowed value for a declared attr | `UI.badge: attribute :count expected :integer, got String: "3"` at render |
 | Missing assign (contract-free) | `Pages.profile: missing assign :bio (assigns given: :name)` at render |
 | Undeclared `@attr` in a contracted template | load-time error naming the attr, the fix, and the declared set |
 | Malformed template | `components/button.html.her:14:3: mismatched closing tag </div> — expected </span> (opened at ...)` at load |
@@ -425,9 +454,15 @@ What it checks, with what is statically knowable:
   render-time `NoMethodError`s;
 - **required attrs are provided** (contract-tier callees) — skipped when the
   call has a `{...}` splat, which could supply them at runtime;
+- **literal values satisfy the attr's type and `values:`** — `count="5"`
+  passed to an `:integer` attr, a bare (boolean) attr passed to a `:string`
+  one, an interpolated `"n-{@x}"` (always a String) passed to a non-string
+  attr, or a literal outside the allowed values — all errors, since they
+  would raise `Her::InvalidAttr` at render;
 - **no undeclared attrs are passed** (contract-tier callees) — a warning by
   default, since renders deliberately allow extra assigns through; raise or
-  silence it with `undeclared_attrs: :error | :ignore`;
+  silence it with `undeclared_attrs: :error | :ignore`. Skipped entirely
+  when the callee declares a `:global` attr — passthrough is then expected;
 - **no unknown slots are passed** — a `<:side>` definition (or children, for
   the `:inner` slot) given to a component that never renders that slot would
   silently drop content, so it's an error; tune with `unknown_slots:`.
@@ -520,7 +555,6 @@ end
 
 ## Roadmap / open questions
 
-- Attr types and allowed-values validation (`attr :kind, values: %w[info warn]`).
 - Frontmatter attr declarations in `.her` files — would give globbed templates
   a contract; deliberately deferred until missing-assign errors prove painful.
 - Rails integration (renderable interface, helper access) — large, separate

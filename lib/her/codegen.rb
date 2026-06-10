@@ -75,6 +75,15 @@ module Her
         if @attrs.any? { |_, opts| opts.key?(:default) }
           parts << "assigns = __her_defaults(#{@name.inspect}).merge(assigns)"
         end
+        # After the defaults merge, so a default (or explicit hash) becomes
+        # the base the collected attrs override.
+        if (global = @attrs.find { |_, opts| opts[:type] == :global })
+          declared_keys = (@attrs.keys - [global.first]).inspect
+          parts << "assigns = ::Her.collect_global(assigns, #{global.first.inspect}, #{declared_keys})"
+        end
+        if @attrs.any? { |_, opts| (opts[:type] && ![:any, :global].include?(opts[:type])) || opts[:values] }
+          parts << "::Her.check_attrs!(self, #{@name.inspect}, assigns, __her_attr_checks(#{@name.inspect}))"
+        end
       end
       if @uses_slots
         parts << "__slots = __slots ? __slots.dup : {}"
@@ -314,23 +323,34 @@ module Her
     end
 
     # Record what is statically knowable about a component call: attr names
-    # are always literal in HER (only values vary), a splat makes the attr
-    # set open-ended, and children count as passing the :inner slot.
+    # are always literal in HER, and so are some values — [:static, text]
+    # and [:bare] (true) can be type/values-checked at verify time, [:mixed]
+    # is a String of unknown content, [:dynamic] is opaque. A splat makes
+    # the attr set open-ended; children count as passing the :inner slot.
     def record_call(node)
-      attrs = []
+      attrs = {}
       splat = false
       node.attrs.each do |attr|
         value = attr.value
         if value.is_a?(Array) && value[0] == :splat
           splat = true
         elsif attr.name != "let"
-          attrs << attr.name.to_sym
+          attrs[attr.name.to_sym] = attr_descriptor(value)
         end
       end
       slots = node.slot_defs.keys
       slots += [:inner] if node.children.any?
       @calls << { kind: node.kind, name: node.name, attrs: attrs, splat: splat,
                   slots: slots, line: node.line }
+    end
+
+    def attr_descriptor(value)
+      return [:bare] if value.nil?
+      case value[0]
+      when :static then [:static, value[1]]
+      when :mixed  then [:mixed]
+      else [:dynamic]
+      end
     end
 
     # Returns [let_params_or_nil, args_hash_source]. Splat attributes split

@@ -98,6 +98,12 @@ module Her
       @__her_registry[name][:defaults]
     end
 
+    # @api private — called by generated code: precomputed type/values
+    # checks for the render-time guard.
+    def __her_attr_checks(name)
+      @__her_registry[name][:attr_checks]
+    end
+
     private
 
     # Refuse to silently overwrite methods HER did not define — e.g. a
@@ -132,6 +138,11 @@ module Her
 
     # Collects `attr` and `template` declarations inside a component block.
     class ComponentBuilder
+      # Declared-attr types. :global collects every undeclared assign into
+      # one hash (for `<div {@rest}>` passthrough); any Class/Module also
+      # works as a type (`attr :at, Time`).
+      ATTR_TYPES = %i[any string symbol boolean integer float numeric array hash proc global].freeze
+
       def initialize(component_name)
         @component_name = component_name
         @attrs = nil
@@ -139,18 +150,38 @@ module Her
         @template_line = nil
       end
 
-      def attr(name, required: false, default: (no_default = true; nil))
+      def attr(name, type = :any, required: false, default: (no_default = true; nil), values: nil)
         name = name.to_sym
         @attrs ||= {}
         raise CompileError, "attr #{name.inspect} declared twice on :#{@component_name}" if @attrs.key?(name)
+        unless ATTR_TYPES.include?(type) || type.is_a?(Module)
+          raise CompileError,
+                "attr #{name.inspect} on :#{@component_name}: unknown type #{type.inspect} " \
+                "(valid: #{ATTR_TYPES.map(&:inspect).join(', ')}, or a Class/Module)"
+        end
         if required && !no_default
           raise CompileError,
                 "attr #{name.inspect} on :#{@component_name} cannot be both required and have a default"
         end
+        validate_global!(name, required, values) if type == :global
+        values = validate_values!(name, type, values) if values
+        unless no_default || default.nil?
+          unless Her.type_ok?(default, type)
+            raise CompileError,
+                  "attr #{name.inspect} on :#{@component_name}: default #{default.inspect} " \
+                  "is not #{Her.type_label(type)}"
+          end
+          if values && !values.include?(default)
+            raise CompileError,
+                  "attr #{name.inspect} on :#{@component_name}: default #{default.inspect} " \
+                  "is not among values: #{values.map(&:inspect).join(', ')}"
+          end
+        end
 
-        opts = { required: !!required }
-        opts[:default] = default.frozen? ? default : default.dup.freeze unless no_default
-        @attrs[name] = opts
+        spec = { type: type, required: !!required }
+        spec[:values] = values if values
+        spec[:default] = default.frozen? ? default : default.dup.freeze unless no_default
+        @attrs[name] = spec
       end
 
       def template(source)
@@ -165,6 +196,36 @@ module Her
       def __attrs = @attrs
       def __template = @template
       def __template_line = @template_line
+
+      private
+
+      def validate_global!(name, required, values)
+        if required
+          raise CompileError, "attr #{name.inspect} on :#{@component_name}: a :global attr cannot be required"
+        end
+        if values
+          raise CompileError, "attr #{name.inspect} on :#{@component_name}: a :global attr cannot have values:"
+        end
+        if (other = @attrs.find { |_, spec| spec[:type] == :global })
+          raise CompileError,
+                "attr #{name.inspect} on :#{@component_name}: only one :global attr is allowed " \
+                "(already declared on #{other.first.inspect})"
+        end
+      end
+
+      def validate_values!(name, type, values)
+        unless values.is_a?(Enumerable) && values.to_a.any?
+          raise CompileError,
+                "attr #{name.inspect} on :#{@component_name}: values: must be a non-empty Enumerable"
+        end
+        values = values.to_a.freeze
+        if (bad = values.find { |v| !Her.type_ok?(v, type) })
+          raise CompileError,
+                "attr #{name.inspect} on :#{@component_name}: values: contains #{bad.inspect}, " \
+                "which is not #{Her.type_label(type)}"
+        end
+        values
+      end
     end
   end
 end

@@ -81,6 +81,9 @@ module Her
         unresolvable_module: :error,
         undefined_remote_function: :error,
         missing_required_attr: :error,
+        # literal values that would raise Her::InvalidAttr at render time
+        attr_type: :error,
+        attr_value: :error,
         undeclared_attr: undeclared_attrs,
         unknown_slot: unknown_slots
       }
@@ -151,19 +154,26 @@ module Her
       declared = callee_meta[:attrs]
 
       if declared
+        global = declared.any? { |_, opts| opts[:type] == :global }
         unless call[:splat]
           declared.each do |attr_name, opts|
             next unless opts[:required]
-            next if call[:attrs].include?(attr_name)
+            next if call[:attrs].key?(attr_name)
             add(:missing_required_attr, mod, caller_name, meta, call,
                 "calls #{callee} without its required attr :#{attr_name}")
           end
         end
-        call[:attrs].each do |attr_name|
-          next if declared.key?(attr_name)
-          add(:undeclared_attr, mod, caller_name, meta, call,
-              "passes attr `#{attr_name}` to #{callee}, which does not declare it " \
-              "(declared: #{declared.keys.map(&:inspect).join(', ')})")
+        call[:attrs].each do |attr_name, descriptor|
+          spec = declared[attr_name]
+          unless spec
+            # collected into the :global attr — expected passthrough
+            next if global
+            add(:undeclared_attr, mod, caller_name, meta, call,
+                "passes attr `#{attr_name}` to #{callee}, which does not declare it " \
+                "(declared: #{declared.keys.map(&:inspect).join(', ')})")
+            next
+          end
+          check_attr_value(mod, caller_name, meta, call, callee, attr_name, spec, descriptor)
         end
       end
 
@@ -180,6 +190,34 @@ module Her
             "passes slot <:#{slot_name}> to #{callee}, which never renders it"
           end
         add(:unknown_slot, mod, caller_name, meta, call, message)
+      end
+    end
+
+    # Type/values checks on what is statically knowable about one attr:
+    # [:static, text] is a literal String, [:bare] is true, [:mixed] is a
+    # String of unknown content (type-checkable, values-uncheckable),
+    # [:dynamic] is opaque.
+    def check_attr_value(mod, caller_name, meta, call, callee, attr_name, spec, descriptor)
+      sample =
+        case descriptor[0]
+        when :static then descriptor[1]
+        when :bare   then true
+        when :mixed  then ""
+        else return
+        end
+
+      type = spec[:type]
+      if type && type != :any && !Her.type_ok?(sample, type)
+        got = descriptor[0] == :mixed ? "an interpolated String" : sample.inspect
+        add(:attr_type, mod, caller_name, meta, call,
+            "passes #{got} to attr :#{attr_name} of #{callee}, declared #{Her.type_label(type)}")
+        return
+      end
+
+      if spec[:values] && descriptor[0] != :mixed && !spec[:values].include?(sample)
+        add(:attr_value, mod, caller_name, meta, call,
+            "passes #{sample.inspect} to attr :#{attr_name} of #{callee} — " \
+            "allowed values: #{spec[:values].map(&:inspect).join(', ')}")
       end
     end
 

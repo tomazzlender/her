@@ -41,6 +41,18 @@ module Her
     end
   end
 
+  # Raised at render time when a declared attr receives a value of the
+  # wrong type or outside its allowed values.
+  class InvalidAttr < Error
+    attr_reader :component, :attr
+
+    def initialize(mod, name, attr, detail)
+      @component = "#{Her.module_label(mod)}.#{name}"
+      @attr = attr
+      super("#{@component}: attribute #{attr.inspect} #{detail}")
+    end
+  end
+
   # Raised at render time when a contract-free template references an
   # assign that was not passed (§3c). Never silently renders nil.
   class MissingAssign < Error

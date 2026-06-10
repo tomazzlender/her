@@ -75,7 +75,75 @@ module Her
       !(entries.nil? || entries.empty?)
     end
 
+    # -- attr typing ---------------------------------------------------------
+
+    # Does +value+ satisfy declared attr +type+? Shared by declaration-time
+    # validation, the render-time guard, and Her.verify's literal checks.
+    def type_ok?(value, type)
+      case type
+      when :any     then true
+      when :string  then value.is_a?(String)
+      when :symbol  then value.is_a?(Symbol)
+      when :boolean then value.equal?(true) || value.equal?(false)
+      when :integer then value.is_a?(Integer)
+      when :float   then value.is_a?(Float)
+      when :numeric then value.is_a?(Numeric)
+      when :array   then value.is_a?(Array)
+      when :hash    then value.is_a?(Hash)
+      when :proc    then value.respond_to?(:call)
+      when :global  then value.is_a?(Hash)
+      when Module   then value.is_a?(type)
+      else true
+      end
+    end
+
+    def type_label(type)
+      type.is_a?(Module) ? type.name || type.inspect : type.inspect
+    end
+
     # -- runtime helpers used by generated code ----------------------------
+
+    # @api private — render-time type/values guard for declared attrs.
+    # +checks+ is the precomputed [[key, type, values], ...] list. nil is
+    # "absent" and exempt; false likewise (the `attr={@x && "v"}` omit
+    # idiom) except for :boolean attrs, where false is a first-class value.
+    def check_attrs!(mod, name, assigns, checks)
+      checks.each do |key, type, values|
+        value = assigns[key]
+        next if value.nil?
+        next if value.equal?(false) && type != :boolean
+        if type && !type_ok?(value, type)
+          raise InvalidAttr.new(mod, name, key,
+                                "expected #{type_label(type)}, got #{value.class}: #{truncate(value.inspect)}")
+        end
+        if values && !values.include?(value)
+          raise InvalidAttr.new(mod, name, key,
+                                "got #{truncate(value.inspect)} — allowed values: #{values.map(&:inspect).join(', ')}")
+        end
+      end
+    end
+
+    # @api private — `attr :rest, :global` support: returns assigns with
+    # every key that is not in +declared+ collected into the +name+ hash.
+    # Runs after the defaults merge, so a default (or an explicitly passed
+    # hash) acts as the base and collected attrs override it.
+    def collect_global(assigns, name, declared)
+      rest = {}
+      explicit = assigns[name]
+      rest.update(explicit) if explicit.is_a?(Hash)
+      kept = {}
+      assigns.each do |key, value|
+        if key == name
+          next
+        elsif declared.include?(key)
+          kept[key] = value
+        else
+          rest[key] = value
+        end
+      end
+      kept[name] = rest
+      kept
+    end
 
     # @api private — strict assign access for contract-free templates (§3c):
     # a missing assign raises instead of silently rendering nil.
@@ -108,6 +176,10 @@ module Her
     end
 
     private
+
+    def truncate(str, max = 80)
+      str.length > max ? "#{str[0, max]}…" : str
+    end
 
     def assert_slots!(slots, api)
       return if slots.is_a?(Hash)
