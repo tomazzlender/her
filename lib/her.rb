@@ -31,9 +31,6 @@ require_relative "her/verify"
 #
 #   UI.button(label: "Save").to_s # => "<button class=\"btn\">Save</button>"
 module Her
-  SLOT_STACK_KEY = :__her_slot_stack__
-  private_constant :SLOT_STACK_KEY
-
   class << self
     # Escape +value+ for HTML unless it is already trusted (§5). Safe values
     # pass through untouched — this is what lets components nest without
@@ -50,31 +47,32 @@ module Her
     end
 
     # -- slots ------------------------------------------------------------
+    # Slot context is plain data: every compiled component receives a slots
+    # hash, and `render_slot(...)` written in a template hole is rewritten
+    # at compile time to pass it along. Content blocks close over the slots
+    # of the template they appear in — which is what makes slot resolution
+    # lexical. There is no global or fiber-local state, so rendering works
+    # across threads, fibers and lazily-evaluated blocks.
 
-    # Render slot +name+ of the component currently being rendered, passing
-    # +args+ to the slot's block. Returns a Safe string, or nil when the
-    # slot was not provided — so `{render_slot(:x) || "fallback"}` works.
-    # Multiple definitions of the same slot render concatenated, in order.
-    def render_slot(name = :inner, *args)
-      entries = current_slot_frame("render_slot")[name]
+    # Render slot +name+ from +slots+, passing +args+ to the slot's block.
+    # Returns a Safe string, or nil when the slot was not provided — so
+    # `{render_slot(:x) || "fallback"}` works. Multiple definitions of the
+    # same slot render concatenated, in order.
+    #
+    # In templates, call it bare: `{render_slot(:x)}` — the compiler
+    # supplies the slots argument.
+    def render_slot(slots, name = :inner, *args)
+      assert_slots!(slots, "render_slot")
+      entries = slots[name]
       return nil if entries.nil? || entries.empty?
       Safe.new(entries.map { |callable| safe(callable.call(*args)) }.join)
     end
 
-    # True when the caller provided slot +name+.
-    def slot?(name = :inner)
-      entries = current_slot_frame("slot?")[name]
+    # True when +slots+ contains slot +name+. In templates: `{slot?(:x)}`.
+    def slot?(slots, name = :inner)
+      assert_slots!(slots, "slot?")
+      entries = slots[name]
       !(entries.nil? || entries.empty?)
-    end
-
-    # @api private — used by generated code
-    def push_slots(slots)
-      slot_stack.push(slots)
-    end
-
-    # @api private — used by generated code
-    def pop_slots
-      slot_stack.pop
     end
 
     # -- runtime helpers used by generated code ----------------------------
@@ -111,13 +109,12 @@ module Her
 
     private
 
-    def slot_stack
-      Thread.current[SLOT_STACK_KEY] ||= []
-    end
-
-    def current_slot_frame(api)
-      slot_stack.last or
-        raise SlotError, "#{api} called outside of a component render"
+    def assert_slots!(slots, api)
+      return if slots.is_a?(Hash)
+      raise SlotError,
+            "#{api} must be called bare inside a template hole — HER rewrites it there to " \
+            "receive the component's slot context. Outside a template, pass a slots Hash " \
+            "explicitly (got #{slots.inspect})."
     end
   end
 end

@@ -260,9 +260,91 @@ class ComponentTest < Minitest::Test
     assert_equal "EMPTYt", render(mod.caller).strip
   end
 
-  def test_render_slot_outside_render_raises
-    assert_raises(Her::SlotError) { Her.render_slot(:inner) }
+  def test_render_slot_without_slot_context_raises_with_guidance
+    error = assert_raises(Her::SlotError) { Her.render_slot(:inner) }
+    assert_match(/must be called bare inside a template hole/, error.message)
     assert_raises(Her::SlotError) { Her.slot?(:inner) }
+  end
+
+  def test_render_slot_takes_an_explicit_slots_hash_outside_templates
+    out = Her.render_slot({ inner: [-> { "<b>x</b>" }] }, :inner)
+    assert_equal "&lt;b&gt;x&lt;/b&gt;", out.to_s
+    assert Her.slot?({ inner: [-> { "" }] })
+    refute Her.slot?({}, :inner)
+  end
+
+  def test_render_slot_works_across_fiber_boundaries
+    # The block given to Enumerator#next runs in a separate fiber; slot
+    # context travels through the closure, not fiber-local state.
+    mod = component_module do
+      component :lazy do
+        template "<p>{Enumerator.new { |y| y << render_slot(:inner) }.next}</p>"
+      end
+    end
+    assert_equal "<p>hi</p>", render(mod.lazy { "hi" })
+    refute_includes Her.generated_source(mod, :lazy), "push_slots"
+  end
+
+  def test_slot_call_inside_string_interpolation
+    mod = component_module do
+      component :wrapped do
+        template %q(<p>{"[#{render_slot(:inner)}]"}</p>)
+      end
+    end
+    assert_equal "<p>[x]</p>", render(mod.wrapped { "x" })
+  end
+
+  def test_bare_render_slot_with_fallback_expression
+    mod = component_module do
+      component :box do
+        template %q(<p>{render_slot || raw("none")}</p>)
+      end
+    end
+    assert_equal "<p>none</p>", render(mod.box)
+    assert_equal "<p>given</p>", render(mod.box { "given" })
+  end
+
+  def test_render_slot_command_form
+    skip "needs prism" unless Her::RubyScanner.prism?
+    mod = component_module do
+      component :box do
+        template "<p>{render_slot :inner}</p>"
+      end
+    end
+    assert_equal "<p>x</p>", render(mod.box { "x" })
+  end
+
+  def test_methods_named_like_render_slot_are_untouched
+    mod = component_module do
+      def self.my_render_slot(value) = "M#{value}"
+      component :demo do
+        template "<p>{my_render_slot(@x)}</p>"
+      end
+    end
+    assert_equal "<p>M1</p>", render(mod.demo(x: 1))
+  end
+
+  def test_render_slot_on_a_receiver_is_not_rewritten
+    obj = Class.new { def render_slot = "object-method" }.new
+    mod = component_module do
+      component :demo do
+        template "<p>{@obj.render_slot}</p>"
+      end
+    end
+    assert_equal "<p>object-method</p>", render(mod.demo(obj: obj))
+  end
+
+  def test_helpers_cannot_render_slots_implicitly
+    # Slot context is data, not ambient state: a module helper has no slot
+    # frame to read. The error says what to do instead.
+    mod = component_module do
+      def self.sneaky = Her.render_slot(:inner)
+      component :demo do
+        template "<p>{sneaky}</p>"
+      end
+    end
+    error = assert_raises(Her::SlotError) { mod.demo { "x" } }
+    assert_match(/must be called bare/, error.message)
   end
 
   def test_user_helpers_callable_from_holes

@@ -57,7 +57,6 @@ module Her
       flush_static
       @out << "\n" unless @out.end_with?("\n")
       @out << "::Her::Safe.new(__buf)\n"
-      @out << "ensure\n::Her.pop_slots\n" if @uses_slots
       @out << "end\n"
       @out
     end
@@ -80,7 +79,6 @@ module Her
       if @uses_slots
         parts << "__slots = __slots ? __slots.dup : {}"
         parts << "(__slots[:inner] ||= [__inner]) if __inner"
-        parts << "::Her.push_slots(__slots)"
       end
       parts << "__buf = +''"
       parts.join("; ")
@@ -149,7 +147,7 @@ module Her
 
     def rewrite(code, line, kind: nil)
       scan_slot_calls(code)
-      RubyScanner.rewrite_assigns(code, kind: kind) do |key|
+      RubyScanner.rewrite_hole_code(code, kind: kind) do |key|
         if @mode == :declared
           unless @attrs.key?(key)
             declared = @attrs.keys.map(&:inspect).join(", ")
@@ -423,25 +421,16 @@ module Her
       let || "*"
     end
 
-    # Children of a component call / slot definition compile to a lambda with
-    # its own buffer. When this template uses slots at all, the lambda
-    # re-pushes the *defining* method's frame so slot renders inside passed
-    # content resolve lexically, not against the callee.
+    # Children of a component call / slot definition compile to a lambda
+    # with its own buffer. Slot renders inside the lambda reference the
+    # defining method's `__slots` local through the closure — which is
+    # exactly what makes slot resolution lexical, with no runtime state.
     def emit_lambda_body(children, start_line, end_line)
       lambda_buf = fresh_var("__buf")
-      if @uses_slots
-        emit("begin", start_line)
-        emit("::Her.push_slots(__slots)", start_line)
-      end
       emit("#{lambda_buf} = +''", start_line)
       walk_children(children, lambda_buf)
       flush_static
       emit("::Her::Safe.new(#{lambda_buf})", end_line)
-      if @uses_slots
-        emit("ensure", end_line)
-        emit("::Her.pop_slots", end_line)
-        emit("end", end_line)
-      end
     end
 
     # -- slot rendering -----------------------------------------------------------
@@ -455,10 +444,10 @@ module Her
               "use {render_slot(#{node.name.to_sym.inspect}, args...)} to pass arguments"
       end
       if node.children.empty?
-        emit("#{buf} << ::Her.render_slot(#{node.name.to_sym.inspect}).to_s", node.line)
+        emit("#{buf} << ::Her.render_slot(__slots, #{node.name.to_sym.inspect}).to_s", node.line)
       else
         slot_var = fresh_var("__slot")
-        emit("if (#{slot_var} = ::Her.render_slot(#{node.name.to_sym.inspect}))", node.line)
+        emit("if (#{slot_var} = ::Her.render_slot(__slots, #{node.name.to_sym.inspect}))", node.line)
         emit("#{buf} << #{slot_var}.to_s", node.line)
         emit("else", node.line)
         walk_children(node.children, buf)

@@ -260,7 +260,14 @@ block parameters do the same: `UI.list(items: xs) { |x| "row #{x}" }`.
 
 Slot renders resolve *lexically*: a `<:icon/>` written in template A renders
 A's `:icon` slot even when it appears inside children passed to another
-component.
+component. The mechanism is plain data flow — each compiled component
+receives a slots hash, `render_slot(...)` in a hole is rewritten at compile
+time to pass it along, and content blocks close over the slots of the
+template they appear in. No global or fiber-local state is involved, so
+rendering works across threads, fibers, and lazily-evaluated blocks.
+A consequence: `render_slot` is only meaningful inside template holes —
+a module helper method has no ambient slot context to read (calling
+`Her.render_slot` without a slots hash raises with guidance).
 
 ### Control flow
 
@@ -431,8 +438,7 @@ for custom policies.
 Soundness limits, stated plainly: attr names are always statically known in
 HER, but a splat opens the attr set, and a `render_slot(expr)` with a dynamic
 name opens the callee's slot set — both suppress the affected checks for that
-call. Slot rendering routed through helper methods (`{my_helper_that_calls_render_slot}`)
-isn't statically visible either; downgrade `unknown_slots:` if you do that.
+call.
 Contract-free callees get existence checks only — a template's `@x` references
 can't soundly serve as an implicit contract because references inside `{if}`
 branches are conditionally required. Verification is one more reason to

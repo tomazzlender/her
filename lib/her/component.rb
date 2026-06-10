@@ -121,16 +121,10 @@ module Her
     end
 
     # -- helpers available bare inside template holes --------------------------
-    # These become (private) singleton methods of the extending module, so
-    # hole code like `{render_slot(:inner)}` and `{raw(@html)}` resolves.
-
-    def render_slot(name = :inner, *args)
-      Her.render_slot(name, *args)
-    end
-
-    def slot?(name = :inner)
-      Her.slot?(name)
-    end
+    # Becomes a (private) singleton method of the extending module, so hole
+    # code like `{raw(@html)}` resolves. (`render_slot`/`slot?` need no
+    # helper: the compiler rewrites them to ::Her calls carrying the slot
+    # context.)
 
     def raw(value)
       Her.raw(value)

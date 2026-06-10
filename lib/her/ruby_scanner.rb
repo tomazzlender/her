@@ -143,43 +143,70 @@ module Her
 
     # -- assign rewriting (§4b) -----------------------------------------------------
 
-    # Rewrite every `@name` read in code position using the block's return
-    # value. +kind+ is the hole's statement classification — fragments are
-    # wrapped into parseable Ruby for the Prism engine. Raises IvarWriteError
-    # on assignment to an @assign (Prism engine).
-    def rewrite_assigns(code, kind: nil, &replacement)
+    # Rewrite hole code for emission into the generated method:
+    #
+    #   * every `@name` read in code position becomes the block's return
+    #     value (§4b),
+    #   * bare `render_slot(...)`/`slot?(...)` calls become
+    #     `::Her.render_slot(__slots, ...)` — slot context is passed as
+    #     plain data, no global state.
+    #
+    # +kind+ is the hole's statement classification — fragments are wrapped
+    # into parseable Ruby for the Prism engine. Raises IvarWriteError on
+    # assignment to an @assign (Prism engine).
+    def rewrite_hole_code(code, kind: nil, &replacement)
       return code if kind == :end
-      return rewrite_assigns_heuristic(code, &replacement) unless prism?
+      return rewrite_hole_code_heuristic(code, &replacement) unless prism?
 
       wrapped, shift = wrap_fragment(code, kind)
       result = Prism.parse(wrapped)
       # Shouldn't happen — classification accepted this code — but degrade
       # gracefully rather than fail.
-      return rewrite_assigns_heuristic(code, &replacement) unless result.success?
+      return rewrite_hole_code_heuristic(code, &replacement) unless result.success?
 
-      collector = IvarCollector.new
+      collector = RewriteCollector.new
       result.value.accept(collector)
       if (write = collector.writes.first)
         raise IvarWriteError.new(write.name)
       end
 
-      reads = collector.reads.select do |node|
-        offset = node.location.start_offset
-        offset >= shift && offset < shift + code.bytesize
+      in_range = ->(offset) { offset >= shift && offset < shift + code.bytesize }
+      edits = []
+      collector.reads.each do |node|
+        next unless in_range.call(node.location.start_offset)
+        edits << [node.location.start_offset - shift, node.location.length,
+                  replacement.call(node.name[1..].to_sym)]
       end
-      return code if reads.empty?
+      collector.slot_calls.each do |node|
+        next unless in_range.call(node.message_loc.start_offset)
+        edits << slot_call_edit(node, shift)
+      end
+      return code if edits.empty?
 
       out = +""
       cursor = 0
-      reads.sort_by! { |node| node.location.start_offset }
-      reads.each do |node|
-        start = node.location.start_offset - shift
+      edits.sort_by!(&:first)
+      edits.each do |start, length, text|
         out << code.byteslice(cursor, start - cursor)
-        out << replacement.call(node.name[1..].to_sym)
-        cursor = start + node.location.length
+        out << text
+        cursor = start + length
       end
       out << code.byteslice(cursor, code.bytesize - cursor)
       out.force_encoding(code.encoding)
+    end
+
+    # Splice for one bare render_slot/slot? call: replace the message (and
+    # opening paren, when present) so __slots becomes the first argument.
+    def slot_call_edit(node, shift)
+      start = node.message_loc.start_offset - shift
+      if node.opening_loc # render_slot(:x) / render_slot()
+        length = node.opening_loc.end_offset - node.message_loc.start_offset
+        [start, length, "::Her.#{node.name}(__slots#{node.arguments ? ', ' : ''}"]
+      elsif node.arguments # command form: render_slot :x
+        [start, node.message_loc.length, "::Her.#{node.name} __slots,"]
+      else # bare: render_slot || fallback
+        [start, node.message_loc.length, "::Her.#{node.name}(__slots)"]
+      end
     end
 
     # Statement fragments are not complete Ruby; wrap them into the smallest
@@ -210,16 +237,25 @@ module Her
     end
 
     if PRISM_AVAILABLE
-      # Collects @ivar reads (to rewrite) and writes (to reject). The default
-      # visitor traverses children when we call super, so reads inside
-      # `#{...}` interpolation are found while plain string text is not.
-      class IvarCollector < Prism::Visitor
-        attr_reader :reads, :writes
+      # Collects @ivar reads (to rewrite), ivar writes (to reject), and bare
+      # render_slot/slot? calls (to thread the slot context through). The
+      # default visitor traverses children when we call super, so nodes
+      # inside `#{...}` interpolation are found while string text is not.
+      class RewriteCollector < Prism::Visitor
+        attr_reader :reads, :writes, :slot_calls
 
         def initialize
           @reads = []
           @writes = []
+          @slot_calls = []
           super()
+        end
+
+        def visit_call_node(node)
+          if node.receiver.nil? && (node.name == :render_slot || node.name == :slot?)
+            @slot_calls << node
+          end
+          super
         end
 
         def visit_instance_variable_read_node(node)
@@ -284,16 +320,16 @@ module Her
       on_eof.call
     end
 
-    # Heuristic `@name` rewrite: skips string contents (but descends into
-    # `#{...}`), comments, `@@class_vars`, and `@` preceded by a word
-    # character.
-    def rewrite_assigns_heuristic(code, &replacement)
+    # Heuristic hole rewrite: `@name` reads and bare render_slot/slot? calls,
+    # skipping string contents (but descending into `#{...}`), comments,
+    # `@@class_vars`, and tokens preceded by a word character or receiver.
+    def rewrite_hole_code_heuristic(code, &replacement)
       out = +""
       catch(:her_scan_eof) do
         eof = -> { throw :her_scan_eof }
         scanner = StringScanner.new(code)
         until scanner.eos?
-          if (chunk = scanner.scan(/[^"'@#]+/))
+          if (chunk = scanner.scan(/[^"'@#a-z]+/))
             out << chunk
           elsif scanner.scan(/"/)
             out << '"' << rewrite_double_quoted(scanner, eof, &replacement) << '"'
@@ -307,12 +343,30 @@ module Her
             else
               out << replacement.call(ivar[1..].to_sym)
             end
+          elsif (call = scanner.scan(/(?:render_slot|slot\?)(?![\w?])/))
+            if out.match?(/[\w.:@$]\z/) # receiver call, symbol, etc — not ours
+              out << call
+            else
+              out << heuristic_slot_call(call, scanner)
+            end
+          elsif (word = scanner.scan(/[a-z][a-zA-Z0-9_]*[!?]?/))
+            out << word
           else
             out << scanner.getch
           end
         end
       end
       out
+    end
+
+    # Heuristic counterpart of slot_call_edit: paren and bare forms only
+    # (the command form `render_slot :x` needs the Prism engine).
+    def heuristic_slot_call(name, scanner)
+      if scanner.scan(/\s*\(/)
+        "::Her.#{name}(__slots#{scanner.match?(/\s*\)/) ? '' : ', '}"
+      else
+        "::Her.#{name}(__slots)"
+      end
     end
 
     # -- internals ----------------------------------------------------------------
@@ -361,7 +415,7 @@ module Her
           out << "\\" << (scanner.getch || eof.call)
         elsif scanner.scan(/\#\{/)
           body = scan_hole_body(scanner, on_eof: eof)
-          out << "\#{" << rewrite_assigns_heuristic(body, &replacement) << "}"
+          out << "\#{" << rewrite_hole_code_heuristic(body, &replacement) << "}"
         elsif scanner.scan(/#/)
           out << "#"
         elsif scanner.scan(/"/)
