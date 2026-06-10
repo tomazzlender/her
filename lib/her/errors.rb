@@ -7,17 +7,32 @@ module Her
   # Raised at load time when a template cannot be tokenized or parsed.
   # The message always carries file:line:column pointing at the author's
   # template source (for inline templates, at the Ruby file that declared
-  # the heredoc).
+  # the heredoc), plus the offending source line with a caret.
   class ParseError < Error
     attr_reader :file, :line, :column
 
-    def initialize(message, file: nil, line: nil, column: nil)
+    def initialize(message, file: nil, line: nil, column: nil, snippet: nil)
       @file = file
       @line = line
       @column = column
       location = [file, line, column].compact.join(":")
-      super(location.empty? ? message : "#{location}: #{message}")
+      full = location.empty? ? message : "#{location}: #{message}"
+      full = "#{full}\n#{snippet}" if snippet
+      super(full)
     end
+  end
+
+  # Renders one source line with a caret under the column, for ParseError
+  # messages. +line+ is local to +source+ (1-based).
+  #
+  #     3 |   <span>oops</div>
+  #       |              ^
+  def self.source_snippet(source, line, column, display_line: line)
+    text = source.lines[line - 1] or return nil
+    text = text.chomp.gsub("\t", " ")
+    gutter = display_line.to_s
+    caret_pad = " " * [[column - 1, 0].max, text.length].min
+    "  #{gutter} | #{text}\n  #{' ' * gutter.length} | #{caret_pad}^"
   end
 
   # Raised at load time for problems outside the template text itself:

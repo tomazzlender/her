@@ -39,6 +39,7 @@ module Her
       builder = ComponentBuilder.new(name)
       builder.instance_eval(&block) if block
 
+      template_path = nil
       if (source = builder.__template)
         origin = { file: caller_loc.path, first_line: builder.__template_line }
       else
@@ -51,10 +52,12 @@ module Her
         end
         source = File.read(path)
         origin = { file: path, first_line: 1 }
+        template_path = path
       end
 
       __her_guard_collision!(name, "component #{name.inspect}")
-      Compiler.define(self, name, source, origin: origin, attrs: builder.__attrs, kind: :component)
+      Compiler.define(self, name, source, origin: origin, attrs: builder.__attrs,
+                                          kind: :component, template_path: template_path)
     end
 
     # Defines one contract-free function per file matching +glob+ (§3b),
@@ -84,7 +87,7 @@ module Her
 
         __her_guard_collision!(name, "template file #{path}")
         Compiler.define(self, name, File.read(path), origin: { file: path, first_line: 1 },
-                                                     attrs: nil, kind: :embed)
+                                                     attrs: nil, kind: :embed, template_path: path)
       end
     end
 

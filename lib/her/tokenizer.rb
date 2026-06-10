@@ -75,7 +75,8 @@ module Her
     end
 
     def fail!(message, line: @line, col: @col)
-      raise ParseError.new(message, file: @file, line: @first_line + line - 1, column: col)
+      raise ParseError.new(message, file: @file, line: @first_line + line - 1, column: col,
+                                    snippet: Her.source_snippet(@s.string, line, col, display_line: @first_line + line - 1))
     end
 
     def location_label(line, col)

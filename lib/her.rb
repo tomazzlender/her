@@ -175,6 +175,35 @@ module Her
       mod.__her_registry.dig(name.to_sym, :generated_source)
     end
 
+    # Recompile every *file-based* template (sibling files and
+    # embed_templates globs) from disk — the dev-loop primitive: wire it to
+    # your file watcher or call it between requests in development. Inline
+    # templates live in Ruby files and are your code reloader's job.
+    # Attr declarations are reused from the registry. Returns the number of
+    # templates recompiled. A template that no longer compiles raises,
+    # leaving the previously compiled method in place.
+    def reload_templates!(*mods)
+      mods = component_modules if mods.empty?
+      count = 0
+      mods.each do |mod|
+        mod.__her_registry.each do |name, meta|
+          path = meta[:template_path] or next
+          Compiler.define(mod, name, File.read(path),
+                          origin: { file: path, first_line: 1 },
+                          attrs: meta[:attrs], kind: meta[:kind], template_path: path)
+          count += 1
+        end
+      end
+      count
+    end
+
+    # When true, compiled components wrap their output in HTML comments
+    # naming the component and its template origin — handy for finding
+    # which component produced what in a rendered page. Read at *compile*
+    # time: set it before requiring your component modules (or call
+    # Her.reload_templates! after toggling).
+    attr_accessor :debug_annotations
+
     private
 
     def truncate(str, max = 80)

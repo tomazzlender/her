@@ -22,10 +22,11 @@ module Her
     SlotRenderNode = Struct.new(:name, :attrs, :children, :line, :end_line, keyword_init: true)
     Root = Struct.new(:children)
 
-    def initialize(tokens, file:, first_line: 1)
+    def initialize(tokens, file:, first_line: 1, source: nil)
       @tokens = tokens
       @file = file
       @first_line = first_line
+      @source = source
     end
 
     def parse
@@ -149,7 +150,9 @@ module Her
     end
 
     def fail!(message, line, col)
-      raise ParseError.new(message, file: @file, line: @first_line + line - 1, column: col)
+      snippet = @source && Her.source_snippet(@source, line, col, display_line: @first_line + line - 1)
+      raise ParseError.new(message, file: @file, line: @first_line + line - 1, column: col,
+                                    snippet: snippet)
     end
   end
 end

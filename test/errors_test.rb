@@ -40,6 +40,17 @@ class ErrorsTest < Minitest::Test
     assert_match(/opened at/, error.message)
   end
 
+  def test_parse_errors_carry_a_source_snippet_with_caret
+    error = parse_error("<div>\n  <span>oops</div>\n</div>")
+    lines = error.message.lines
+    assert_includes error.message, "|   <span>oops</div>"
+    caret_line = lines.find { |l| l.strip == "| #{' ' * 12}^".strip && l.include?("^") } ||
+                 lines.find { |l| l.include?("^") }
+    refute_nil caret_line
+    # caret under the `<` of `</div>` (column 13)
+    assert_equal 13, caret_line.index("^") - caret_line.index("|") - 1
+  end
+
   def test_stray_close_tag
     error = parse_error("hello</p>")
     assert_match(%r{closing tag </p> without a matching open tag}, error.message)

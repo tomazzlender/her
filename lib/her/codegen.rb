@@ -26,7 +26,9 @@ module Her
       @static_buf = nil
       @var_serial = 0
       @swallow_blank_text = false
+      trim_tree!(@tree)
       @uses_slots = tree_uses_slots?(@tree)
+      @annotate = Her.debug_annotations
 
       # Call-site metadata for Her.verify, collected while walking (§ verify).
       @calls = []
@@ -56,6 +58,7 @@ module Her
       walk_children(@tree.children, "__buf")
       flush_static
       @out << "\n" unless @out.end_with?("\n")
+      @out << "__buf << #{string_literal("<!-- </#{label}> -->")}.freeze\n" if @annotate
       @out << "::Her::Safe.new(__buf)\n"
       @out << "end\n"
       @out
@@ -90,7 +93,77 @@ module Her
         parts << "(__slots[:inner] ||= [__inner]) if __inner"
       end
       parts << "__buf = +''"
+      if @annotate
+        origin_label = [@file, @first_line].compact.join(":")
+        parts << "__buf << #{string_literal("<!-- <#{label}> #{origin_label} -->")}.freeze"
+      end
       parts.join("; ")
+    end
+
+    # -- statement-line trimming -------------------------------------------------
+    # A template line that contains only control-flow holes leaves a blank
+    # line in the output; trim its indentation and newline, Erubi-style.
+    # Trimming only ever removes newlines, so the template-line sync simply
+    # re-pads — backtrace mapping is preserved.
+
+    def trim_tree!(node)
+      case node
+      when Parser::Root
+        trim_statement_lines!(node.children, root: true)
+        node.children.each { |child| trim_tree!(child) }
+      when Parser::ElementNode, Parser::SlotDefNode, Parser::SlotRenderNode
+        trim_statement_lines!(node.children, root: false)
+        node.children.each { |child| trim_tree!(child) }
+      when Parser::ComponentNode
+        trim_statement_lines!(node.children, root: false)
+        node.children.each { |child| trim_tree!(child) }
+        node.slot_defs.each_value { |defs| defs.each { |slot_def| trim_tree!(slot_def) } }
+      end
+    end
+
+    def trim_statement_lines!(children, root:)
+      trimmed = []
+      children.each_with_index do |child, index|
+        next unless child.is_a?(Parser::HoleNode) && child.statement
+        next unless line_start_before?(children, index, root, trimmed)
+        next unless line_end_after?(children, index)
+        trimmed << index
+        prev_node = index.positive? ? children[index - 1] : nil
+        next_node = children[index + 1]
+        prev_node.value = prev_node.value.sub(/[ \t]+\z/, "") if prev_node.is_a?(Parser::TextNode)
+        next_node.value = next_node.value.sub(/\A[ \t]*\r?\n/, "") if next_node.is_a?(Parser::TextNode)
+      end
+    end
+
+    def line_start_before?(children, index, root, trimmed)
+      prev_node = index.positive? ? children[index - 1] : nil
+      case prev_node
+      when nil
+        root # element/component children begin mid-line, after their tag
+      when Parser::TextNode
+        value = prev_node.value
+        value.match?(/\n[ \t]*\z/) || value.empty? ||
+          (root && index == 1 && value.match?(/\A[ \t]*\z/))
+      when Parser::HoleNode
+        trimmed.include?(index - 1) # statements sharing an owned line
+      else
+        false
+      end
+    end
+
+    def line_end_after?(children, index)
+      next_node = children[index + 1]
+      case next_node
+      when nil
+        true # the "line" ends with the template/scope
+      when Parser::TextNode
+        next_node.value.match?(/\A[ \t]*\r?\n/) ||
+          (children[index + 2].nil? && next_node.value.match?(/\A[ \t]*\z/))
+      when Parser::HoleNode
+        !!next_node.statement
+      else
+        false
+      end
     end
 
     # -- emission with template-line sync -------------------------------------

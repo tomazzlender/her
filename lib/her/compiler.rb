@@ -12,13 +12,13 @@ module Her
     #   so errors and backtraces point at the author's source.
     # attrs: declared attr metadata ({name => {required:, default:}}) for the
     #   contract tier, or nil for contract-free templates (§3c).
-    def define(mod, name, source, origin:, attrs: nil, kind: :component)
+    def define(mod, name, source, origin:, attrs: nil, kind: :component, template_path: nil)
       file = origin.fetch(:file)
       first_line = origin.fetch(:first_line, 1)
       label = Her.module_label(mod)
 
       tokens = Tokenizer.new(source, file: file, first_line: first_line).tokenize
-      tree = Parser.new(tokens, file: file, first_line: first_line).parse
+      tree = Parser.new(tokens, file: file, first_line: first_line, source: source).parse
       codegen = Codegen.new(
         tree,
         name: name,
@@ -48,6 +48,8 @@ module Her
       mod.__her_registry[name] = {
         kind: kind,
         attrs: attrs,
+        # set for file-based templates; Her.reload_templates! recompiles them
+        template_path: template_path,
         defaults: attrs ? attrs.filter_map { |k, o| [k, o[:default]] if o.key?(:default) }.to_h.freeze : nil,
         # precomputed [[key, type, values], ...] for the render-time guard
         attr_checks: attrs&.filter_map { |k, o|

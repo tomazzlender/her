@@ -330,6 +330,10 @@ This is plain Ruby compiled into the method body — no special block tags, no
 cannot express multiline control flow in `{}` at all; this is where HER
 deliberately beats its model.)
 
+Lines that contain only statement holes are trimmed from the output —
+the `{each do}` / `{end}` lines above leave no blank lines behind. A
+statement sharing its line with content leaves the line untouched.
+
 Rules worth knowing:
 
 - A hole is a statement when it *starts with* a control-flow keyword or *ends
@@ -408,7 +412,7 @@ Where the polish went (§7 of the build spec):
 | Wrong type / disallowed value for a declared attr | `UI.badge: attribute :count expected :integer, got String: "3"` at render |
 | Missing assign (contract-free) | `Pages.profile: missing assign :bio (assigns given: :name)` at render |
 | Undeclared `@attr` in a contracted template | load-time error naming the attr, the fix, and the declared set |
-| Malformed template | `components/button.html.her:14:3: mismatched closing tag </div> — expected </span> (opened at ...)` at load |
+| Malformed template | `components/button.html.her:14:3: mismatched closing tag </div> — expected </span> (opened at ...)` at load, with the source line and a caret under the column |
 | Syntactically invalid Ruby in a hole | load-time error with the parser's message at the template line (Prism), e.g. `invalid Ruby in interpolation: expected an expression after the operator` |
 | Bad Ruby in a hole at runtime (`{@bio.upcase}` on nil) | the normal Ruby error, with a backtrace pointing at **the template file and line** (`profile.html.her:3`) |
 | Unbalanced control flow | load-time `CompileError` naming the component, with a hint |
@@ -484,6 +488,24 @@ defined later in the same module, in a file required later, or be the
 component itself (recursion) — all legitimate. Phoenix defers verification to
 the end of module compilation for the same reason; HER defers to the explicit
 call, which is the Ruby-idiomatic finalize step.
+
+## Development conveniences
+
+```ruby
+Her.reload_templates!            # re-read and recompile all file-based
+Her.reload_templates!(UI)        # templates (sibling files + globs);
+                                 # wire it to your file watcher
+Her.debug_annotations = true     # set BEFORE loading components: rendered
+                                 # output gets <!-- <UI.card> ui.rb:12 -->
+                                 # comments around each component
+puts Her.generated_source(UI, :button)  # what the compiler produced
+```
+
+`reload_templates!` reuses the attr declarations from the original
+definition — editing a `.her` file never needs the Ruby file re-evaluated.
+A template that no longer compiles raises (with the caret snippet) and
+leaves the previous compilation in place. Inline templates live in Ruby
+files and are your code reloader's business.
 
 ## Design decisions vs HEEx's known pain points
 
