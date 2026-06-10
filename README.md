@@ -597,6 +597,24 @@ def self.button(assigns = {}, __slots = nil, &__inner)
 end
 ```
 
+## Editor support & tooling
+
+- **Syntax highlighting**: `editors/her.tmLanguage.json` is a TextMate
+  grammar for `.her` files — holes highlight as embedded Ruby, component
+  (`<.button>`), slot (`<:title>`) and qualified (`<Icons.star>`) tags get
+  their own scopes, and attribute holes work inside quoted values. Drop it
+  into any TextMate-grammar-based editor (VS Code, Sublime, Zed); it is
+  deliberately basic — contributions welcome.
+- **RuboCop cop** for the heredoc trap: `Her/TemplateInterpolation` flags
+  `template` arguments that interpolate `#{...}` at definition time (the
+  one mistake everyone makes once). Opt in:
+
+  ```yaml
+  # .rubocop.yml
+  require:
+    - her/rubocop
+  ```
+
 ## Roadmap / open questions
 
 - Frontmatter attr declarations in `.her` files — would give globbed templates
@@ -604,6 +622,8 @@ end
 - Rails integration (renderable interface, helper access) — large, separate
   body of work; HER stays framework-agnostic until it's designed properly.
 - A `her` CLI to pretty-print generated code and check templates.
+- A real formatter and an LSP (the verify metadata — components, attrs,
+  required, slots — is exactly what completion needs) as adoption warrants.
 
 ## Development
 
