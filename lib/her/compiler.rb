@@ -29,6 +29,12 @@ module Her
         first_line: first_line
       ).generate
 
+      # Redefinition of a HER-defined component (collision rule §3d, code
+      # reload) is intentional; drop the old method to avoid the warning.
+      if mod.__her_registry.key?(name) && mod.singleton_class.method_defined?(name)
+        mod.singleton_class.send(:remove_method, name)
+      end
+
       begin
         mod.module_eval(generated, file, first_line - 1)
       rescue ::SyntaxError => e
