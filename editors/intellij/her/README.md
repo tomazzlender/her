@@ -26,7 +26,7 @@ Ruby CI):
 ```sh
 cd editors/intellij/her
 gradle buildPlugin
-# -> build/distributions/her-intellij-0.1.0.zip
+# -> build/distributions/her-intellij.zip
 ```
 
 Then `Settings → Plugins → ⚙ → Install Plugin from Disk…` and pick the
@@ -102,7 +102,9 @@ way).
 **`bundler: command not found: her` (exit 127) — but the same command
 works in your terminal.**
 
-The IDE is running a *different* `bundle` than your shell. GUI-launched
+Two independent causes stack here; you may need both fixes.
+
+*1. The IDE runs a different `bundle` than your shell.* GUI-launched
 IDEs capture the login-shell environment (`~/.zprofile`) but not
 interactive-shell config (`~/.zshrc`) — which is where mise, rbenv and
 asdf usually edit PATH — and macOS ships a system `/usr/bin/bundle`
@@ -118,6 +120,20 @@ command: /opt/rubies/3.3.6/bin/bundle exec her
 Alternatives that fix it IDE-wide: move the version-manager init from
 `~/.zshrc` to `~/.zprofile` and restart the IDE, or launch the IDE from
 a terminal (`idea .`), which inherits the terminal's PATH.
+
+*2. The version manager resolves a different Ruby than your shell.* Even
+once the IDE reaches a mise/rbenv/asdf shim, the shim picks the Ruby for
+the directory — and if the project pins no version, that's the **global
+default**, which usually isn't the Ruby you ran `bundle install` under.
+The bundle for that other Ruby is empty, so `her` is "not found" again.
+This bites only outside an interactive shell (your terminal may export
+`MISE_RUBY_VERSION` or similar that the IDE never sees), which is why it
+reproduces *only* in the IDE. Pin the version in the repo so resolution
+is identical everywhere:
+
+```sh
+echo "ruby 3.3.6" > .tool-versions   # or the equivalent .ruby-version / mise.toml
+```
 - In *this* repo, the boot file is the example app's:
   the checked-in `.her-lsp` already points at
   `examples/sinatra_app/config/boot.rb`, so opening the repo root works.
