@@ -13,6 +13,23 @@ class EditorsTest < Minitest::Test
     assert_includes grammar["fileTypes"], "her"
   end
 
+  def test_plist_grammar_stays_in_sync_with_canonical_json
+    require_relative "../tools/grammar_build"
+    expected = GrammarBuild.plist(File.read(File.join(ROOT, "editors", "her.tmLanguage.json")))
+    actual = File.read(File.join(ROOT, "editors", "her.tmLanguage"))
+    assert_equal expected, actual,
+                 "editors/her.tmLanguage is generated — run `rake grammar` after editing the JSON grammar"
+  end
+
+  def test_plist_grammar_shape
+    plist = File.read(File.join(ROOT, "editors", "her.tmLanguage"))
+    assert plist.start_with?("<?xml")
+    assert_includes plist, "<key>scopeName</key>"
+    assert_includes plist, "<string>text.html.her</string>"
+    assert_includes plist, "<key>fileTypes</key>"
+    refute_includes plist, "$schema"
+  end
+
   def test_vscode_extension_grammar_copy_stays_in_sync
     canonical = File.read(File.join(ROOT, "editors", "her.tmLanguage.json"))
     bundled = File.read(File.join(ROOT, "editors", "vscode", "her", "syntaxes", "her.tmLanguage.json"))

@@ -26,7 +26,7 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency "prism", ">= 0.19"
 
-  spec.files = Dir["lib/**/*.rb", "exe/*", "editors/**/*.{json,md,js}", "LICENSE", "README.md"]
+  spec.files = Dir["lib/**/*.rb", "exe/*", "editors/**/*.{json,md,js,tmLanguage}", "LICENSE", "README.md"]
   spec.bindir = "exe"
   spec.executables = ["her"]
   spec.require_paths = ["lib"]

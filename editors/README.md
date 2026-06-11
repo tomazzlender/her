@@ -2,10 +2,13 @@
 
 Two things to wire per editor:
 
-1. **Syntax highlighting** — `editors/her.tmLanguage.json` is a TextMate
-   grammar (scope `text.html.her`) for editors that speak TextMate
-   grammars. Editors that don't (Zed, Vim) get a good approximation by
-   treating `.her` as HTML, since HER templates *are* HTML plus holes.
+1. **Syntax highlighting** — the TextMate grammar (scope `text.html.her`)
+   ships in two serializations: `editors/her.tmLanguage.json` (VS Code and
+   friends) and `editors/her.tmLanguage`, the plist build for Sublime Text
+   and TextMate (regenerate with `rake grammar`; the JSON is canonical).
+   Editors that don't speak TextMate grammars (Zed, Vim) get a good
+   approximation by treating `.her` as HTML, since HER templates *are*
+   HTML plus holes.
 2. **The language server** — any LSP client can run it; it speaks plain
    stdio JSON-RPC:
 
@@ -104,7 +107,17 @@ autocmd FileType her runtime! syntax/html.vim
 
 ## Sublime Text
 
-LSP via the [LSP package](https://packagecontrol.io/packages/LSP)
+Highlighting: copy the plist build of the grammar into your user packages
+(`Preferences → Browse Packages…` opens the folder):
+
+```sh
+cp editors/her.tmLanguage ~/"Library/Application Support/Sublime Text/Packages/User/" # macOS
+cp editors/her.tmLanguage ~/.config/sublime-text/Packages/User/                        # Linux
+```
+
+`.her` files pick up the syntax automatically (the grammar declares the
+file type). Then the language server, via the
+[LSP package](https://packagecontrol.io/packages/LSP)
 (`Preferences → Package Settings → LSP → Settings`):
 
 ```jsonc
@@ -118,14 +131,6 @@ LSP via the [LSP package](https://packagecontrol.io/packages/LSP)
   }
 }
 ```
-
-Highlighting: Sublime loads TextMate grammars in the *plist* format
-(`.tmLanguage`), not the JSON flavor this repo ships. Either convert
-`editors/her.tmLanguage.json` (the PackageDev package converts JSON →
-plist) and drop it in your `Packages/User`, or take the zero-effort route:
-open a `.her` file and `View → Syntax → Open all with current extension
-as… → HTML`, then change the LSP selector above to `"text.html"` (with
-the same attaches-to-all-HTML caveat as Vim).
 
 ## Zed
 
