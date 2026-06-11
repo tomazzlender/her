@@ -599,21 +599,63 @@ end
 
 ## Editor support & tooling
 
-- **Syntax highlighting**: `editors/her.tmLanguage.json` is a TextMate
-  grammar for `.her` files — holes highlight as embedded Ruby, component
-  (`<.button>`), slot (`<:title>`) and qualified (`<Icons.star>`) tags get
-  their own scopes, and attribute holes work inside quoted values. Drop it
-  into any TextMate-grammar-based editor (VS Code, Sublime, Zed); it is
-  deliberately basic — contributions welcome.
-- **RuboCop cop** for the heredoc trap: `Her/TemplateInterpolation` flags
-  `template` arguments that interpolate `#{...}` at definition time (the
-  one mistake everyone makes once). Opt in:
+### The `her` CLI
 
-  ```yaml
-  # .rubocop.yml
-  require:
-    - her/rubocop
-  ```
+```sh
+her fmt app/components            # format .her templates in place
+her fmt --check app/components    # CI mode: exit 1 if anything would change
+her check -r ./config/boot.rb     # load the app, run Her.verify!
+her lsp -r ./config/boot.rb       # language server on stdio
+her source -r ./boot.rb UI.button # print the generated Ruby
+```
+
+### Formatter
+
+`her fmt` (or `Her::Formatter.format`) is a *safe* formatter: it re-indents
+lines from the parsed structure but never moves content between lines, so it
+cannot change rendered semantics. Children indent two spaces; `{if}`/`{each
+do}` indent what follows; `{else}`/`{elsif}`/`{when}` outdent Ruby-style.
+Left verbatim: everything inside `<pre>`/`<textarea>`/`<script>`/`<style>`,
+continuation lines of multi-line holes (Ruby code), and multi-line tags.
+Idempotent; malformed templates fail with the usual caret error instead of
+being "formatted".
+
+### Language server
+
+`her lsp` speaks LSP over stdio with no dependencies. Everything it knows
+comes from the same registry that powers `Her.verify` — pass your app's
+entry point with `-r` and you get:
+
+- **diagnostics** as you type (parse/compile errors with positions) plus
+  `Her.verify` findings on open/save — typo'd components, missing required
+  attrs, wrong-typed literals, unknown slots, in-editor;
+- **completion**: components after `<.`, their attrs (with type, required,
+  default, values) inside the tag, slot names after `<:`;
+- **hover**: the component's contract; **go-to-definition**: jumps to the
+  `.her` file or the declaring Ruby line.
+
+Without `-r` it still provides syntax diagnostics. Saving a registered
+`.her` file hot-reloads it via `Her.reload_templates!`. Wire it up as a
+generic stdio language server for the `her` filetype in your editor.
+
+### Syntax highlighting
+
+`editors/her.tmLanguage.json` is a TextMate grammar for `.her` files —
+holes highlight as embedded Ruby, component (`<.button>`), slot
+(`<:title>`) and qualified (`<Icons.star>`) tags get their own scopes, and
+attribute holes work inside quoted values. Works in any
+TextMate-grammar-based editor (VS Code, Sublime, Zed).
+
+### RuboCop cop
+
+`Her/TemplateInterpolation` flags `template` arguments that interpolate
+`#{...}` at definition time (the one mistake everyone makes once). Opt in:
+
+```yaml
+# .rubocop.yml
+require:
+  - her/rubocop
+```
 
 ## Roadmap / open questions
 
@@ -621,9 +663,6 @@ end
   a contract; deliberately deferred until missing-assign errors prove painful.
 - Rails integration (renderable interface, helper access) — large, separate
   body of work; HER stays framework-agnostic until it's designed properly.
-- A `her` CLI to pretty-print generated code and check templates.
-- A real formatter and an LSP (the verify metadata — components, attrs,
-  required, slots — is exactly what completion needs) as adoption warrants.
 
 ## Development
 
