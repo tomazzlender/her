@@ -1,4 +1,5 @@
 /.bundle/
+/editors/intellij/her/.kotlin/
 /pkg/
 /tmp/
 *.gem
