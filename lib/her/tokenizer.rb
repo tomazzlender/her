@@ -10,7 +10,7 @@ module Her
   # Lines in tokens are template-local (1-based); error messages add the
   # origin offset so inline heredoc templates report real .rb file lines.
   class Tokenizer
-    TagToken  = Struct.new(:type, :kind, :name, :attrs, :self_closing, :void, :line, :col, keyword_init: true)
+    TagToken  = Struct.new(:type, :kind, :name, :attrs, :self_closing, :void, :line, :col, :end_line, keyword_init: true)
     TextToken = Struct.new(:type, :value, :line, :col, keyword_init: true)
     HoleToken = Struct.new(:type, :code, :line, :col, keyword_init: true)
     # value is nil (bare attribute) or one of:
@@ -243,7 +243,7 @@ module Her
       void = kind == :html && VOID_ELEMENTS.include?(name)
       @tokens << TagToken.new(
         type: :tag_open, kind: kind, name: name, attrs: attrs,
-        self_closing: self_closing, void: void, line: line, col: col
+        self_closing: self_closing, void: void, line: line, col: col, end_line: @line
       )
 
       return unless kind == :html

@@ -12,6 +12,7 @@ require_relative "her/codegen"
 require_relative "her/compiler"
 require_relative "her/component"
 require_relative "her/verify"
+require_relative "her/formatter"
 
 # HER — HTML Embedded Ruby.
 #

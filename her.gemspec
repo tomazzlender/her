@@ -24,6 +24,8 @@ Gem::Specification.new do |spec|
   spec.metadata["source_code_uri"] = spec.homepage
   spec.metadata["rubygems_mfa_required"] = "true"
 
-  spec.files = Dir["lib/**/*.rb", "LICENSE", "README.md"]
+  spec.files = Dir["lib/**/*.rb", "exe/*", "editors/*", "LICENSE", "README.md"]
+  spec.bindir = "exe"
+  spec.executables = ["her"]
   spec.require_paths = ["lib"]
 end
