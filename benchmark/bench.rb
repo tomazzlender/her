@@ -70,6 +70,11 @@ module Bench
   end
   component :typed do
     attr :count, :integer, required: true
+    attr :kind, :string, default: "a"
+    template "<i>{@count}{@kind}</i>"
+  end
+  component :valued do
+    attr :count, :integer, required: true
     attr :kind, :string, values: %w[a b c], default: "a"
     template "<i>{@count}{@kind}</i>"
   end
@@ -153,8 +158,9 @@ bench("loop over 10_000 escaped items", iterations: 30) { loop_mod.l(items: item
 bench("nested components, depth 50") { Bench.nest(n: 50) }
 
 count = 0
-bench("typed attrs (type + values guard)") { Bench.typed(count: (count += 1), kind: "b") }
-bench("same shape, untyped (guard skipped)") { Bench.untyped(count: (count += 1), kind: "b") }
+bench("typed attrs (inlined type guards)") { Bench.typed(count: (count += 1), kind: "b") }
+bench("typed attrs + values: (helper path)") { Bench.valued(count: (count += 1), kind: "b") }
+bench("same shape, untyped (no guards)") { Bench.untyped(count: (count += 1), kind: "b") }
 bench("global attr collection") { Bench.globaled("data-a": "1", "data-b": "2", id: "x") }
 
 # ERB league check: same 100-item loop, escaped, precompiled

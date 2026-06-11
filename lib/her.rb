@@ -104,10 +104,18 @@ module Her
 
     # -- runtime helpers used by generated code ----------------------------
 
-    # @api private — render-time type/values guard for declared attrs.
-    # +checks+ is the precomputed [[key, type, values], ...] list. nil is
-    # "absent" and exempt; false likewise (the `attr={@x && "v"}` omit
-    # idiom) except for :boolean attrs, where false is a first-class value.
+    # @api private — raises for an inline type-guard failure (the common
+    # symbol types compile to direct predicates in the method header).
+    def invalid_type!(mod, name, key, type, value)
+      raise InvalidAttr.new(mod, name, key,
+                            "expected #{type_label(type)}, got #{value.class}: #{truncate(value.inspect)}")
+    end
+
+    # @api private — render-time guard for the declared-attr checks that
+    # cannot be inlined: values: lists and Class/Module types. +checks+ is
+    # the precomputed [[key, type, values], ...] list. nil is "absent" and
+    # exempt; false likewise (the `attr={@x && "v"}` omit idiom) except for
+    # :boolean attrs, where false is a first-class value.
     def check_attrs!(mod, name, assigns, checks)
       checks.each do |key, type, values|
         value = assigns[key]

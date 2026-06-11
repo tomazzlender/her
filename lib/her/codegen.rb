@@ -92,7 +92,17 @@ module Her
           declared_keys = (@attrs.keys - [global.first]).inspect
           parts << "assigns = ::Her.collect_global(assigns, #{global.first.inspect}, #{declared_keys})"
         end
-        if @attrs.any? { |_, opts| (opts[:type] && ![:any, :global].include?(opts[:type])) || opts[:values] }
+        # Symbol-typed attrs without values: compile to direct predicates —
+        # the contract is enforced everywhere at ~no cost. values: lists and
+        # Class/Module types go through the (rarer) helper below.
+        @attrs.each do |key, opts|
+          predicate = inline_type_predicate(opts)
+          next unless predicate
+          exempt = opts[:type] == :boolean ? "" : "__v.equal?(false) || "
+          parts << "((__v = assigns[#{key.inspect}]).nil? || #{exempt}#{predicate}) or " \
+                   "::Her.invalid_type!(self, #{@name.inspect}, #{key.inspect}, #{opts[:type].inspect}, __v)"
+        end
+        if @attrs.any? { |_, opts| opts[:values] || opts[:type].is_a?(Module) }
           parts << "::Her.check_attrs!(self, #{@name.inspect}, assigns, __her_attr_checks(#{@name.inspect}))"
         end
       end
@@ -173,6 +183,18 @@ module Her
             "#{label}: strict_html — #{message}#{origin(line)}; control flow must be " \
             "fully nested within each element (the conditional-wrapper pattern is " \
             "disallowed in strict mode)"
+    end
+
+    # The check expression for a symbol-typed attr, or nil when the attr
+    # needs the runtime helper (values:, Class/Module types) or no check.
+    def inline_type_predicate(opts)
+      return nil if opts[:values] || !opts[:type].is_a?(Symbol)
+      case opts[:type]
+      when :any, :global then nil
+      when :boolean      then "__v.equal?(true) || __v.equal?(false)"
+      when :proc         then "__v.respond_to?(:call)"
+      else "__v.is_a?(::#{opts[:type].to_s.capitalize})"
+      end
     end
 
     # -- statement-line trimming -------------------------------------------------

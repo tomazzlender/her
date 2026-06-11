@@ -62,10 +62,10 @@ module Her
         template_path: template_path,
         strict_html: strict_html,
         defaults: attrs ? attrs.filter_map { |k, o| [k, o[:default]] if o.key?(:default) }.to_h.freeze : nil,
-        # precomputed [[key, type, values], ...] for the render-time guard
+        # precomputed [[key, type, values], ...] for the non-inlinable
+        # render-time checks (values: lists, Class/Module types)
         attr_checks: attrs&.filter_map { |k, o|
-          type = o[:type] unless [:any, :global].include?(o[:type])
-          [k, type, o[:values]].freeze if type || o[:values]
+          [k, o[:type], o[:values]].freeze if o[:values] || o[:type].is_a?(Module)
         }&.freeze,
         file: file,
         first_line: first_line,
