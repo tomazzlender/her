@@ -59,7 +59,7 @@ module Her
     # Format the file at +path+ in place. Returns true when the contents
     # changed. check: true leaves the file untouched and only reports.
     def format_file(path, indent: "  ", check: false)
-      original = File.read(path)
+      original = File.read(path, encoding: "UTF-8")
       formatted = format(original, indent: indent, file: path)
       return false if formatted == original
       File.write(path, formatted) unless check

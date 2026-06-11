@@ -1,0 +1,4 @@
+<%# attr :label, :string, required: true %>
+<%# attr :kind, :string, values: %w[active archived], default: "active" %>
+<%# attr :rest, :global %>
+<span class="badge badge-{@kind}" {@rest}>{@label}</span>

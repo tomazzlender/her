@@ -6,3 +6,5 @@ Gemfile.lock
 editors/intellij/her/build/
 editors/intellij/her/.gradle/
 editors/intellij/her/.intellijPlatform/
+examples/sinatra_app/Gemfile.lock
+examples/sinatra_app/.bundle/

@@ -1,0 +1,12 @@
+<%# attr :projects, :array, required: true %>
+<.layout title="Projects — HER example">
+  <:crumbs><small>Home / Projects</small></:crumbs>
+  <h1>Projects</h1>
+  {if @projects.empty?}
+    <p>No projects yet.</p>
+  {else}
+    {@projects.each do |project|}
+      <.project_card project={project} data-id={project[:id]}/>
+    {end}
+  {end}
+</.layout>

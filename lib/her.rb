@@ -195,7 +195,7 @@ module Her
           # frontmatter/required contracts are re-derived from the file and
           # the recorded policy, so editing declarations applies on reload
           attrs = meta[:attrs_origin] == :block ? meta[:attrs] : nil
-          Compiler.define(mod, name, File.read(path),
+          Compiler.define(mod, name, File.read(path, encoding: "UTF-8"),
                           origin: { file: path, first_line: 1 },
                           attrs: attrs, kind: meta[:kind], template_path: path,
                           strict_html: meta[:strict_html])

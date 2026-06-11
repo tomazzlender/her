@@ -1,0 +1,26 @@
+<%# The page chrome. Callers fill :inner; :crumbs and :footer have fallbacks. %>
+<%# attr :title, :string, required: true %>
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>{@title}</title>
+    <style>
+      body { font-family: system-ui; margin: 2rem; max-width: 48rem }
+      .card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: .5rem 0 }
+      .badge { padding: .1rem .5rem; border-radius: 99px; background: #eee; font-size: .85em }
+      .badge-archived { background: #fdd }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav>
+        <.nav_link href="/" label="Projects" current/>
+        <.nav_link href="/empty" label="Empty state"/>
+      </nav>
+      <:crumbs/>
+    </header>
+    <main>{render_slot(:inner)}</main>
+    <footer><:footer>Served by the HER example app</:footer></footer>
+  </body>
+</html>

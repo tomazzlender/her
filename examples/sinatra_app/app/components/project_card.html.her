@@ -1,0 +1,11 @@
+<%# attr :project, :hash, required: true %>
+<%# attr :rest, :global %>
+<article class="card" {@rest}>
+  <h2>{@project[:name]}</h2>
+  {if @project[:archived]}
+    <.badge label="archived" kind="archived"/>
+  {else}
+    <.badge label={"#{@project[:stars]} ★"} data-stars={@project[:stars]}/>
+  {end}
+  <.nav_link href={"/projects/#{@project[:id]}"} label="Open"/>
+</article>

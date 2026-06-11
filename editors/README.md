@@ -28,6 +28,12 @@ Two things to wire per editor:
 The server reads from the workspace root, so relative `-r` paths and
 relative template paths resolve per-project.
 
+A ready-made project for trying any of this is
+[`../examples/sinatra_app/`](../examples/sinatra_app) — open *that
+directory* as your editor's project root and the conventions below fire
+with zero configuration (it has the Gemfile and `config/boot.rb` the
+clients look for).
+
 ## VS Code
 
 A ready-to-copy extension lives in [`vscode/her/`](vscode/her):

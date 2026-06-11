@@ -193,6 +193,14 @@ every component call written in those templates at boot. That escalation
 path (template → contract → composition → slots → verified page) is the
 library.
 
+**7. A running app.** [`examples/sinatra_app/`](examples/sinatra_app)
+serves it over HTTP with the smallest possible host: `config/boot.rb`
+loads the components (the same file feeds `her lsp` and `her check`),
+routes render with `.to_s`, `Her.verify!` gates boot, and a before-filter
+calls `Her.reload_templates!` in development — edit a template, refresh
+the browser. It is also the project to open when testing editor
+integrations.
+
 ## Installation
 
 ```ruby

@@ -51,7 +51,7 @@ module Her
                 "#{Her.module_label(self)}.#{name}: no inline template and no sibling " \
                 "template file at #{path}"
         end
-        source = File.read(path)
+        source = File.read(path, encoding: "UTF-8")
         origin = { file: path, first_line: 1 }
         template_path = path
       end
@@ -89,7 +89,7 @@ module Her
         next if __her_registry.dig(name, :kind) == :component # explicit wins (§3d)
 
         __her_guard_collision!(name, "template file #{path}")
-        Compiler.define(self, name, File.read(path), origin: { file: path, first_line: 1 },
+        Compiler.define(self, name, File.read(path, encoding: "UTF-8"), origin: { file: path, first_line: 1 },
                                                      attrs: nil, kind: :embed, template_path: path,
                                                      strict_html: strict_html.nil? ? Her.strict_html : strict_html)
       end

@@ -1,0 +1,3 @@
+# Boot file for `her lsp` when this repo itself is opened as a project
+# (read by the IntelliJ plugin; other editors configure -r explicitly).
+examples/sinatra_app/config/boot.rb
