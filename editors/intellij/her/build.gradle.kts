@@ -30,6 +30,10 @@ intellijPlatform {
         """.trimIndent()
         ideaVersion {
             sinceBuild = "242"
+            // Without this, the Gradle plugin derives untilBuild = "242.*"
+            // and the installer rejects any newer IDE. The LSP API used
+            // here is stable; leave the range open-ended.
+            untilBuild = provider { null }
         }
     }
 }

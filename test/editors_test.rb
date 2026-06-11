@@ -52,6 +52,13 @@ class EditorsTest < Minitest::Test
     assert_includes plugin_xml, "com.intellij.modules.ultimate" # LSP API is commercial-only
   end
 
+  def test_intellij_build_leaves_the_compatibility_range_open
+    gradle = File.read(File.join(ROOT, "editors", "intellij", "her", "build.gradle.kts"))
+    assert_includes gradle, "untilBuild = provider { null }",
+                    "without an explicit null untilBuild, the Gradle plugin derives a " \
+                    "ceiling from sinceBuild and newer IDEs refuse to install the plugin"
+  end
+
   def test_vscode_extension_manifest_references_existing_files
     dir = File.join(ROOT, "editors", "vscode", "her")
     manifest = JSON.parse(File.read(File.join(dir, "package.json")))

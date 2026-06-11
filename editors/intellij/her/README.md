@@ -26,6 +26,11 @@ gradle buildPlugin
 Then `Settings → Plugins → ⚙ → Install Plugin from Disk…` and pick the
 zip. `gradle runIde` launches a sandboxed IDE for trying it out.
 
+The compatibility range is open-ended (`sinceBuild 242`, no until-build),
+so the zip installs on any 2024.2+ IDE. If a future platform release ever
+breaks the LSP API at runtime, bump `intellijIdeaUltimate("2024.2")` in
+`build.gradle.kts` to your IDE's version and rebuild.
+
 ## How the server is started
 
 One process per project, in the project root:
