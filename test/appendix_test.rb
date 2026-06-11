@@ -46,6 +46,7 @@ class AppendixTest < Minitest::Test
 
   def test_missing_attr
     error = assert_raises(Her::MissingAttr) { UI.card }
-    assert_equal "AppendixTest::UI.card: missing required attribute :title", error.message
+    assert_equal "AppendixTest::UI.card: missing required attribute :title (assigns given: none)",
+                 error.message
   end
 end

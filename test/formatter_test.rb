@@ -73,8 +73,8 @@ class FormatterTest < Minitest::Test
   def test_does_not_change_semantics
     messy = "<article>\n<pre>  keep</pre>\n{if @on}\n<b>x</b>\n{end}\n</article>\n"
     formatted = fmt(messy)
-    m1 = component_module { component(:t) { template messy } }
-    m2 = component_module { component(:t) { template formatted } }
+    m1 = component_module { component(:t) { attr :on; template messy } }
+    m2 = component_module { component(:t) { attr :on; template formatted } }
     [{ on: true }, { on: false }].each do |assigns|
       a = m1.t(assigns).to_s
       b = m2.t(assigns).to_s

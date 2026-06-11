@@ -24,20 +24,20 @@ class EmbedTest < Minitest::Test
     assert_respond_to mod, :button
   end
 
-  def test_embedded_templates_are_contract_free
+  def test_embedded_templates_take_contracts_from_frontmatter
     mod = component_module do
       embed_templates "fixtures/components/*.html.her"
     end
-    error = assert_raises(Her::MissingAssign) { mod.button(class: "x") }
-    assert_match(/missing assign :label/, error.message)
+    error = assert_raises(Her::MissingAttr) { mod.button(class: "x") }
+    assert_match(/missing required attribute :label/, error.message)
     assert_match(/assigns given: :class/, error.message)
   end
 
-  def test_missing_assign_never_renders_nil
+  def test_required_frontmatter_attrs_never_render_nil
     mod = component_module do
       embed_templates "fixtures/components/*.html.her"
     end
-    assert_raises(Her::MissingAssign) { mod.user_card(name: "Ana") }
+    assert_raises(Her::MissingAttr) { mod.user_card(name: "Ana") }
   end
 
   def test_sibling_file_resolution
@@ -100,6 +100,7 @@ class EmbedTest < Minitest::Test
     mod = component_module do
       embed_templates "fixtures/components/*.html.her"
       component :toolbar do
+        attr :label
         template %(<nav><.button class="t" label={@label}/></nav>)
       end
     end

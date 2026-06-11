@@ -74,6 +74,7 @@ module UI
   extend Her::Component
 
   component :greeting do
+    attr :name, required: true
     template <<~'HER'
       <h1>Hello, {@name}!</h1>
     HER
@@ -82,8 +83,12 @@ end
 
 UI.greeting(name: "world")          # => <h1>Hello, world!</h1>
 UI.greeting(name: "<script>")       # => <h1>Hello, &lt;script&gt;!</h1>
-UI.greeting({})                     # raises Her::MissingAssign — never silent nil
+UI.greeting({})                     # raises Her::MissingAttr — never silent nil
 ```
+
+(That `attr :name` line is not optional — contracts are mandatory. A
+template that references `@x` without declaring it fails at load time
+with the exact declaration to add.)
 
 **2. A contract.** Declare attrs and the function enforces them — required
 at entry, types and values checked, typos in the template caught at load:
@@ -105,8 +110,9 @@ UI.badge(count: 1)              # Her::MissingAttr:  UI.badge: missing required 
 UI.badge(label: "x", count: "3") # Her::InvalidAttr: attribute :count expected :integer, got String: "3"
 ```
 
-Want contracts everywhere? `Her.require_contracts = true` makes a
-contract-less template that references assigns a load-time error.
+Contracts are not optional decoration: they are the calling convention.
+Static templates need no declarations, and `assigns[:key]` is the explicit
+escape hatch for deliberately dynamic access.
 
 **3. One function, two call sites.** Every component is a plain module
 function — so the *same* `badge`, with the *same* contract, is callable
@@ -248,16 +254,10 @@ override the base directory.
 
 ### Contracts differ between the two — by design
 
-- **`embed_templates` is contract-free by default**, exactly like Phoenix.
-  The template's body is its contract: whatever `@foo` it references is what
-  it needs. Referencing a missing assign **raises** `Her::MissingAssign` at
-  render time (naming the component, the assign, and the keys you did pass)
-  — it never silently renders `nil`.
-
-  A `.her` file can opt into the full contract itself, via **frontmatter** —
-  the same `attr` DSL inside leading `<%# %>` comments (think Rails 7.1
-  strict `locals:`, but with HER's types, values and `:global`; a deliberate
-  departure from Phoenix):
+- **`embed_templates` files declare their contract in frontmatter** — the
+  same `attr` DSL inside leading `<%# %>` comments (think Rails 7.1 strict
+  `locals:`, but with HER's types, values and `:global`; a deliberate
+  departure from Phoenix, whose embedded templates are contract-free):
 
   ```her
   <%# attr :label, :string, required: true %>
@@ -274,46 +274,15 @@ override the base directory.
   Declaring attrs both in a `component` block and in its template's
   frontmatter is a load-time error — one source of truth.
 
-  To make contracts mandatory across the app, set `Her.require_contracts =
-  true` (or per definition: `component :x, require_contract: true`,
-  `embed_templates "...", require_contract: true`). A contract-less
-  template then compiles with an *empty* contract, so every `@x` reference
-  fails at load time with the exact attr to declare; purely static
-  templates remain legal, and `assigns[:key]` stays available for
-  deliberately dynamic access.
-- **`component` adds an optional declared-attr tier.** Declaring any `attr`
-  opts in: required attrs are checked on entry (`Her::MissingAttr`), defaults
-  are merged, and referencing an *undeclared* `@attr` fails **at load time**
-  with a message telling you what to declare. A `component` block with no
-  `attr` declarations stays contract-free.
-
-  Attrs can also declare a type, allowed values, and a `:global` collector:
-
-  ```ruby
-  component :badge do
-    attr :count, :integer, required: true
-    attr :kind,  :string, values: %w[low high], default: "low"
-    attr :at,    Time                      # any Class/Module works as a type
-    attr :rest,  :global                   # collects undeclared assigns
-    template %q(<span {@rest} data-kind={@kind}>{@count}</span>)
-  end
-  ```
-
-  Types: `:any` (default), `:string`, `:symbol`, `:boolean`, `:integer`,
-  `:float`, `:numeric`, `:array`, `:hash`, `:proc`, `:global`, or a
-  Class/Module. A wrong type or a value outside `values:` raises
-  `Her::InvalidAttr` at render — and literal values at call sites are
-  checked at boot by `Her.verify!`. `nil` is exempt (it means "absent"), and
-  so is `false` for non-boolean attrs — the `attr={@x && "v"}` omit idiom
-  stays legal. Declarations are validated too: defaults must satisfy the
-  type and be among `values:`, and `values:` must match the type.
-
-  The `:global` attr (one per component) collects every assign the caller
-  passes that isn't otherwise declared — the passthrough pattern for
-  `<div {@rest}>`. A default acts as the base the collected attrs override,
-  so global attrs chain naturally through `<.button aria-label="x"/>` →
-  `{@rest}` splats. Declaring one also tells `Her.verify!` that undeclared
-  attrs at call sites are expected.
+- **Contracts are mandatory everywhere.** A template that declares nothing
+  compiles with an *empty* contract: legal for purely static markup, and a
+  load-time error (naming the exact attr to declare) the moment it
+  references `@x`. There is no opt-out — the escape hatches are explicit:
+  `assigns[:key]` for deliberately dynamic access, and `attr :rest,
+  :global` for passthrough components. Missing *required* attrs raise
+  `Her::MissingAttr` at render, listing the keys that were passed (the
+  fast way to spot string-vs-symbol mistakes); declared-optional attrs
+  read as nil — silence is something you declared, never an accident.
 
 ### Collision rule
 
@@ -335,7 +304,7 @@ UI.button(label: "Save", class: "btn primary", "data-id": "x")
 ```
 
 **`@foo` is template syntax, not an instance variable.** The compiler rewrites
-`@label` → `assigns[:label]` (or a strict fetch for contract-free templates)
+`@label` → `assigns[:label]`
 when it generates the method body. There is no object, no `instance_variable_get`,
 no binding magic. The rewrite understands string literals, so
 `{"alert alert-#{@kind}"}` works while `{"contact: hi@example.com"}` is left alone.
@@ -585,9 +554,8 @@ Where the polish went (§7 of the build spec):
 | Failure | What you get |
 |---|---|
 | Typo'd component / missing required attr / wrong-typed literal / unknown slot at a call site | boot-time error from `Her.verify!`, with did-you-mean (next section) |
-| Missing required attr | `UI.button: missing required attribute :label` at render |
+| Missing required attr | `UI.button: missing required attribute :label (assigns given: :class)` at render |
 | Wrong type / disallowed value for a declared attr | `UI.badge: attribute :count expected :integer, got String: "3"` at render |
-| Missing assign (contract-free) | `Pages.profile: missing assign :bio (assigns given: :name)` at render |
 | Undeclared `@attr` in a contracted template | load-time error naming the attr, the fix, and the declared set |
 | Malformed template | `components/button.html.her:14:3: mismatched closing tag </div> — expected </span> (opened at ...)` at load, with the source line and a caret under the column |
 | Syntactically invalid Ruby in a hole | load-time error with the parser's message at the template line (Prism), e.g. `invalid Ruby in interpolation: expected an expression after the operator` |
@@ -655,10 +623,8 @@ Soundness limits, stated plainly: attr names are always statically known in
 HER, but a splat opens the attr set, and a `render_slot(expr)` with a dynamic
 name opens the callee's slot set — both suppress the affected checks for that
 call.
-Contract-free callees get existence checks only — a template's `@x` references
-can't soundly serve as an implicit contract because references inside `{if}`
-branches are conditionally required. Verification is one more reason to
-declare attrs.
+Hand-written module functions used as callees get existence checks only —
+HER has no contract metadata for them.
 
 Why not verify when each template compiles? Ordering: `<.button/>` may be
 defined later in the same module, in a file required later, or be the

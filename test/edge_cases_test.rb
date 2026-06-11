@@ -8,8 +8,10 @@ require "tmpdir"
 # and inputs at the boundaries of the grammar.
 class EdgeCasesTest < Minitest::Test
   def define(template_src)
+    referenced = template_src.scan(/@([a-z_][a-zA-Z0-9_]*)/).flatten.uniq
     component_module do
       component :demo do
+        referenced.each { |key| attr key.to_sym }
         template template_src
       end
     end
@@ -144,6 +146,7 @@ class EdgeCasesTest < Minitest::Test
   def test_recursive_render_depth
     mod = component_module do
       component :tree do
+        attr :n
         template "<i>{if @n > 0}<.tree n={@n - 1}/>{end}</i>"
       end
     end
@@ -216,8 +219,14 @@ class EdgeCasesTest < Minitest::Test
   end
 
   def test_string_keyed_assigns_fail_with_a_telling_message
-    error = assert_raises(Her::MissingAssign) { define("<p>{@x}</p>").demo("x" => 1) }
-    assert_match(/missing assign :x \(assigns given: "x"\)/, error.message)
+    mod = component_module do
+      component :demo do
+        attr :x, required: true
+        template "<p>{@x}</p>"
+      end
+    end
+    error = assert_raises(Her::MissingAttr) { mod.demo("x" => 1) }
+    assert_match(/missing required attribute :x \(assigns given: "x"\)/, error.message)
   end
 
   def test_verify_catches_recursive_call_missing_own_required_attr

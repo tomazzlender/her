@@ -10,10 +10,11 @@ module Her
     #
     # origin: { file:, first_line: } — where the template text really lives,
     #   so errors and backtraces point at the author's source.
-    # attrs: declared attr metadata ({name => {required:, default:}}) for the
-    #   contract tier, or nil for contract-free templates (§3c).
+    # attrs: declared attr metadata from a component block, or nil — the
+    #   contract then comes from template frontmatter, or is empty
+    #   (contracts are mandatory; an empty contract allows no @refs).
     def define(mod, name, source, origin:, attrs: nil, kind: :component, template_path: nil,
-               strict_html: false, require_contract: false)
+               strict_html: false)
       file = origin.fetch(:file)
       first_line = origin.fetch(:first_line, 1)
       label = Her.module_label(mod)
@@ -34,12 +35,13 @@ module Her
           :frontmatter
         elsif attrs
           :block
-        elsif require_contract
-          # Required contracts: compile with an EMPTY contract so every @x
-          # reference becomes a precise load-time error. Static templates
-          # (and assigns[:key] access) remain legal.
+        else
+          # Contracts are mandatory: a template that declares nothing
+          # compiles with an EMPTY contract, so every @x reference is a
+          # precise load-time error. Static templates (and assigns[:key]
+          # access) remain legal.
           attrs = {}
-          :required
+          :implicit
         end
 
       tokens = Tokenizer.new(source, file: file, first_line: first_line).tokenize
@@ -48,13 +50,11 @@ module Her
         codegen = Codegen.new(
           tree,
           name: name,
-          mode: attrs ? :declared : :free,
           attrs: attrs,
           module_label: label,
           file: file,
           first_line: first_line,
-          strict_html: strict_html,
-          contract_required: attrs_origin == :required
+          strict_html: strict_html
         )
         generated = codegen.generate
       rescue SystemStackError
@@ -89,7 +89,6 @@ module Her
         # :block attrs are passed back in on reload; :frontmatter and
         # :required contracts are re-derived from the file and the policy
         attrs_origin: attrs_origin,
-        require_contract: require_contract,
         defaults: attrs ? attrs.filter_map { |k, o| [k, o[:default]] if o.key?(:default) }.to_h.freeze : nil,
         # precomputed [[key, type, values], ...] for the non-inlinable
         # render-time checks (values: lists, Class/Module types)

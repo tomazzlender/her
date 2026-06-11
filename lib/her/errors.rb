@@ -41,18 +41,23 @@ module Her
   class CompileError < Error; end
 
   # Raised at render time when a declared, required attr is missing (§7.1).
+  # Lists the keys that WERE passed — the fast way to spot string-vs-symbol
+  # key mistakes.
   class MissingAttr < Error
     attr_reader :component, :attr
 
     # Used by generated code; keeps the generated line short.
-    def self.raise_for(mod, name, attr)
-      raise new(mod, name, attr)
+    def self.raise_for(mod, name, attr, assigns = nil)
+      raise new(mod, name, attr, assigns)
     end
 
-    def initialize(mod, name, attr)
+    def initialize(mod, name, attr, assigns = nil)
       @component = "#{Her.module_label(mod)}.#{name}"
       @attr = attr
-      super("#{@component}: missing required attribute #{attr.inspect}")
+      given = assigns ? assigns.keys.map(&:inspect).join(", ") : nil
+      given = "none" if given && given.empty?
+      suffix = given ? " (assigns given: #{given})" : ""
+      super("#{@component}: missing required attribute #{attr.inspect}#{suffix}")
     end
   end
 
@@ -65,20 +70,6 @@ module Her
       @component = "#{Her.module_label(mod)}.#{name}"
       @attr = attr
       super("#{@component}: attribute #{attr.inspect} #{detail}")
-    end
-  end
-
-  # Raised at render time when a contract-free template references an
-  # assign that was not passed (§3c). Never silently renders nil.
-  class MissingAssign < Error
-    attr_reader :component, :assign
-
-    def initialize(mod, name, key, assigns)
-      @component = "#{Her.module_label(mod)}.#{name}"
-      @assign = key
-      given = assigns.keys.map(&:inspect).join(", ")
-      given = "none" if given.empty?
-      super("#{@component}: missing assign #{key.inspect} (assigns given: #{given})")
     end
   end
 

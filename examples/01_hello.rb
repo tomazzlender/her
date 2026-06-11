@@ -11,8 +11,10 @@ module UI
 
   # `component` compiles the template ONCE, right here at load time, into a
   # plain module function `UI.greeting(assigns)`. Rendering is just calling
-  # that method.
+  # that method. Every assign the template reads is declared — that is the
+  # component's contract.
   component :greeting do
+    attr :name, required: true # untyped: accepts String or trusted Her.raw
     template <<~'HER'
       <h1>Hello, {@name}!</h1>
     HER
@@ -31,10 +33,11 @@ puts UI.greeting(name: "<script>alert(1)</script>")
 puts UI.greeting(name: Her.raw("<em>world</em>"))
 # => <h1>Hello, <em>world</em>!</h1>
 
-# Referencing an assign you did not pass is an error, never a silent blank:
+# Omitting a required assign is an error, never a silent blank — and the
+# message lists what you DID pass (great for spotting string-key typos):
 begin
   UI.greeting({})
-rescue Her::MissingAssign => e
+rescue Her::MissingAttr => e
   puts "!! #{e.message}"
-  # => UI.greeting: missing assign :name (assigns given: none)
+  # => UI.greeting: missing required attribute :name (assigns given: none)
 end

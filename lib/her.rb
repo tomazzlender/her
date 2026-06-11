@@ -155,12 +155,6 @@ module Her
       kept
     end
 
-    # @api private — strict assign access for contract-free templates (§3c):
-    # a missing assign raises instead of silently rendering nil.
-    def fetch!(assigns, key, mod, name)
-      assigns.fetch(key) { raise MissingAssign.new(mod, name, key, assigns) }
-    end
-
     # @api private — smart attribute emission for `name={value}` (§1.4):
     # nil/false omit the attribute, true renders it bare, anything else
     # renders name="escaped value".
@@ -204,8 +198,7 @@ module Her
           Compiler.define(mod, name, File.read(path),
                           origin: { file: path, first_line: 1 },
                           attrs: attrs, kind: meta[:kind], template_path: path,
-                          strict_html: meta[:strict_html],
-                          require_contract: meta[:require_contract])
+                          strict_html: meta[:strict_html])
           count += 1
         end
       end
@@ -223,13 +216,6 @@ module Her
     # nest fully within elements). Per-definition strict_html: overrides.
     attr_accessor :strict_html
 
-    # When true, every component must declare its contract — via `attr` in
-    # the component block or template frontmatter. A contract-less template
-    # then compiles with an EMPTY contract, so each `@x` reference is a
-    # load-time error telling you what to declare; purely static templates
-    # remain legal, and `assigns[:key]` stays available for deliberately
-    # dynamic access. Per-definition require_contract: overrides.
-    attr_accessor :require_contracts
 
     private
 

@@ -12,7 +12,7 @@ class ContractTest < Minitest::Test
       end
     end
     error = assert_raises(Her::MissingAttr) { mod.button }
-    assert_match(/\.button: missing required attribute :label\z/, error.message)
+    assert_match(/\.button: missing required attribute :label \(assigns given: none\)\z/, error.message)
     assert_equal :label, error.attr
   end
 
@@ -98,14 +98,16 @@ class ContractTest < Minitest::Test
     assert_match(/declared twice/, error.message)
   end
 
-  def test_component_without_attrs_is_contract_free
-    mod = component_module do
-      component :free do
-        template "<p>{@anything}</p>"
+  def test_component_without_attrs_may_not_reference_assigns
+    error = assert_raises(Her::CompileError) do
+      component_module do
+        component :free do
+          template "<p>{@anything}</p>"
+        end
       end
     end
-    assert_equal "<p>1</p>", render(mod.free(anything: 1))
-    assert_raises(Her::MissingAssign) { mod.free }
+    assert_match(/declares no attrs/, error.message)
+    assert_match(/assigns\[:anything\]/, error.message)
   end
 
   def test_default_values_are_frozen

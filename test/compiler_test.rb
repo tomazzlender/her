@@ -5,8 +5,10 @@ require_relative "test_helper"
 # Phase 1 + 5: the compiler on plain HTML, holes, and attribute flavors.
 class CompilerTest < Minitest::Test
   def define(template_src, name: :demo)
+    referenced = template_src.scan(/@([a-z_][a-zA-Z0-9_]*)/).flatten.uniq
     component_module do
       component name do
+        referenced.each { |key| attr key.to_sym }
         template template_src
       end
     end

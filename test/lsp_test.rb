@@ -24,7 +24,10 @@ class LspTest < Minitest::Test
 
   # A module with file-backed templates, so the LSP can resolve ownership.
   def project(dir)
-    File.write(File.join(dir, "button.html.her"), %(<button class={@class}>{@label}</button>\n))
+    File.write(File.join(dir, "button.html.her"),
+                 "<%# attr :label, :string, required: true %>\n" \
+                 "<%# attr :class, :string %>\n" \
+                 "<button class={@class}>{@label}</button>\n")
     File.write(File.join(dir, "layout.html.her"), %(<main>{render_slot(:inner)}<:side/></main>\n))
     File.write(File.join(dir, "page.html.her"), %(<.layout><p>x</p></.layout>\n))
     mod = Module.new { extend Her::Component }

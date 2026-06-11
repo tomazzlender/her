@@ -60,6 +60,7 @@ class VerifyTest < Minitest::Test
   def test_recursive_component_is_fine
     mod = component_module do
       component :tree do
+        attr :kids
         template "{if @kids.any?}<.tree kids={[]}/>{end}"
       end
     end
@@ -72,6 +73,8 @@ class VerifyTest < Minitest::Test
         Her.raw("<i>#{assigns[:x]}</i>")
       end
       component :bar do
+        attr :y
+        attr :z
         template "<.legacy x={@y} anything_goes={@z}/>"
       end
     end
@@ -138,6 +141,7 @@ class VerifyTest < Minitest::Test
   def test_remote_plain_module_function_resolves
     mod = component_module do
       component :bar do
+        attr :y
         template "<VerifyTest::Helpers.existing x={@y}/>"
       end
     end
@@ -184,6 +188,7 @@ class VerifyTest < Minitest::Test
   def test_splat_suppresses_required_attr_check
     mod = buttoned do
       component :bar do
+        attr :opts
         template "<.button {@opts}/>"
       end
     end
@@ -221,10 +226,11 @@ class VerifyTest < Minitest::Test
     assert_raises(Her::VerifyError) { Her.verify!(mod, undeclared_attrs: :error) }
   end
 
-  def test_contract_free_callee_gets_no_attr_checks
+  def test_global_attr_callee_accepts_arbitrary_attrs_cleanly
     mod = component_module do
       component :freeform do
-        template "<p>{assigns.inspect}</p>"
+        attr :rest, :global
+        template "<p>{@rest.inspect}</p>"
       end
       component :bar do
         template %(<.freeform whatever="x"/>)
@@ -262,6 +268,7 @@ class VerifyTest < Minitest::Test
   def test_bare_attr_to_non_boolean_is_an_error
     mod = typed_mod do
       component :bar do
+        attr :n
         template "<.badge count={@n} kind/>"
       end
     end
@@ -273,6 +280,7 @@ class VerifyTest < Minitest::Test
   def test_interpolated_attr_is_type_checked_as_string
     mod = typed_mod do
       component :bar do
+        attr :n
         template %(<.badge count="n-{@n}"/>)
       end
     end
@@ -284,6 +292,8 @@ class VerifyTest < Minitest::Test
   def test_interpolated_attr_satisfies_string_type
     mod = typed_mod do
       component :bar do
+        attr :n
+        attr :x
         template %(<.badge count={@n} kind="k-{@x}"/>)
       end
     end
@@ -293,6 +303,7 @@ class VerifyTest < Minitest::Test
   def test_literal_outside_values_is_an_error
     mod = typed_mod do
       component :bar do
+        attr :n
         template %(<.badge count={@n} kind="High"/>)
       end
     end
@@ -304,6 +315,8 @@ class VerifyTest < Minitest::Test
   def test_literal_within_values_and_dynamic_holes_are_clean
     mod = typed_mod do
       component :bar do
+        attr :n
+        attr :k
         template %(<.badge count={@n} kind="low"/><.badge count={@n} kind={@k}/>)
       end
     end
@@ -313,6 +326,7 @@ class VerifyTest < Minitest::Test
   def test_bare_attr_to_boolean_is_clean
     mod = typed_mod do
       component :bar do
+        attr :n
         template "<.badge count={@n} on/>"
       end
     end

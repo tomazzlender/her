@@ -144,10 +144,12 @@ class FrontmatterTest < Minitest::Test
     assert_match(/frontmatter can only declare attrs/, error.message)
   end
 
-  def test_templates_without_frontmatter_stay_contract_free
-    embed("plain.html.her" => "<p>{@x}</p>\n") do |mod, _dir|
-      assert_raises(Her::MissingAssign) { mod.plain({}) }
+  def test_templates_without_frontmatter_may_not_reference_assigns
+    error = assert_raises(Her::CompileError) do
+      embed("plain.html.her" => "<p>{@x}</p>\n") {}
     end
+    assert_match(/references undeclared attr @x/, error.message)
+    assert_match(/declares no attrs/, error.message)
   end
 
   def test_comment_only_lines_are_trimmed_from_output

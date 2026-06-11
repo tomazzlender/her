@@ -11,6 +11,7 @@ class DxTest < Minitest::Test
   def test_loop_lines_leave_no_blank_output
     mod = component_module do
       component :list do
+        attr :items
         template <<~'HER'
           <ul>
             {@items.each do |item|}
@@ -26,6 +27,7 @@ class DxTest < Minitest::Test
   def test_conditional_lines_trimmed_including_template_start
     mod = component_module do
       component :badge do
+        attr :on
         template <<~'HER'
           {if @on}
             <b>on</b>
@@ -42,6 +44,7 @@ class DxTest < Minitest::Test
   def test_statement_sharing_a_line_with_content_is_left_alone
     mod = component_module do
       component :inline do
+        attr :on
         template "<p>{if @on}YES{end}</p>\n"
       end
     end
@@ -51,6 +54,7 @@ class DxTest < Minitest::Test
   def test_expression_holes_are_never_trimmed
     mod = component_module do
       component :keeps do
+        attr :x
         template "<pre>\n  {@x}\n</pre>"
       end
     end
@@ -61,6 +65,7 @@ class DxTest < Minitest::Test
     decl_line = nil
     mod = component_module do
       component :mapped do
+        attr :x
         decl_line = __LINE__ + 1
         template "{if @x}\n{end}\n<p>{no_such_helper_here}</p>"
       end
@@ -75,12 +80,12 @@ class DxTest < Minitest::Test
   def test_reload_recompiles_file_templates
     Dir.mktmpdir do |dir|
       path = File.join(dir, "greet.html.her")
-      File.write(path, "<p>v1 {@name}</p>")
+      File.write(path, "<%# attr :name %>\n<p>v1 {@name}</p>")
       mod = component_module {}
       mod.embed_templates("*.html.her", dir: dir)
       assert_equal "<p>v1 Ana</p>", render(mod.greet(name: "Ana"))
 
-      File.write(path, "<h1>v2 {@name}!</h1>")
+      File.write(path, "<%# attr :name %>\n<h1>v2 {@name}!</h1>")
       assert_equal 1, Her.reload_templates!(mod)
       assert_equal "<h1>v2 Ana!</h1>", render(mod.greet(name: "Ana"))
     end

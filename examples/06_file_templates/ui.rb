@@ -8,8 +8,8 @@ module FileUI
   extend Her::Component
 
   # One function per file: components/button.html.her -> FileUI.button,
-  # components/user_card.html.her -> FileUI.user_card. Contract-free:
-  # whatever @assigns the template references is what it needs.
+  # components/user_card.html.her -> FileUI.user_card. Each file declares
+  # its own contract in <%# attr ... %> frontmatter.
   embed_templates "components/*.html.her"
 
   # One-to-one with a contract: no inline `template` means the sibling file

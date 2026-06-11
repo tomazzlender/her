@@ -33,6 +33,8 @@ class ComponentTest < Minitest::Test
 
   def test_local_component_call_with_dynamic_attrs
     ui.component :bar do
+      attr :text
+      attr :cls
       template %(<.button label={@text} class={@cls}/>)
     end
     assert_equal %(<button class="big">Go</button>), render(ui.bar(text: "Go", cls: "big"))
@@ -40,6 +42,7 @@ class ComponentTest < Minitest::Test
 
   def test_component_attr_values_are_values_not_html
     ui.component :bar do
+      attr :text
       template %(<.button label={@text}/>)
     end
     # Escaping happens exactly once, inside button's own template.
@@ -48,6 +51,7 @@ class ComponentTest < Minitest::Test
 
   def test_component_mixed_attr_builds_string_value
     ui.component :bar do
+      attr :name
       template %(<.button label="Hi {@name}!"/>)
     end
     assert_equal %(<button class="btn">Hi Ana!</button>), render(ui.bar(name: "Ana"))
@@ -74,6 +78,7 @@ class ComponentTest < Minitest::Test
 
   def test_component_splat_attrs
     ui.component :bar do
+      attr :opts
       template %(<.button {@opts}/>)
     end
     assert_equal %(<button class="btn">S</button>), render(ui.bar(opts: { label: "S" }))
@@ -81,6 +86,7 @@ class ComponentTest < Minitest::Test
 
   def test_splat_merge_order_later_wins
     ui.component :bar do
+      attr :opts
       template %(<.button label="first" {@opts}/>)
     end
     assert_equal %(<button class="btn">second</button>), render(ui.bar(opts: { label: "second" }))
@@ -126,6 +132,7 @@ class ComponentTest < Minitest::Test
 
   def test_default_slot_from_template_children
     slotted.component :page do
+      attr :x
       template %(<.card title="T"><em>inner {@x}</em></.card>)
     end
     assert_equal %(<div class="card"><h2>T</h2><em>inner 5</em></div>), render(slotted.page(x: 5))
@@ -180,9 +187,11 @@ class ComponentTest < Minitest::Test
   def test_slot_with_let_binding
     mod = component_module do
       component :table do
+        attr :rows
         template "<table>{@rows.each do |r|}<tr>{render_slot(:col, r)}</tr>{end}</table>"
       end
       component :grid do
+        attr :rows
         template "<.table rows={@rows}><:col let={r}><td>{r * 2}</td></:col></.table>"
       end
     end
@@ -192,9 +201,11 @@ class ComponentTest < Minitest::Test
   def test_component_level_let_binds_inner_block_args
     mod = component_module do
       component :list do
+        attr :items
         template "<ul>{@items.each do |i|}<li>{render_slot(:inner, i)}</li>{end}</ul>"
       end
       component :doubles do
+        attr :items
         template "<.list items={@items} let={n}>n={n}</.list>"
       end
     end
@@ -204,6 +215,7 @@ class ComponentTest < Minitest::Test
   def test_render_slot_args_reach_ruby_block
     mod = component_module do
       component :each_item do
+        attr :items
         template "{@items.each do |i|}[{render_slot(:inner, i)}]{end}"
       end
     end
@@ -318,6 +330,7 @@ class ComponentTest < Minitest::Test
     mod = component_module do
       def self.my_render_slot(value) = "M#{value}"
       component :demo do
+        attr :x
         template "<p>{my_render_slot(@x)}</p>"
       end
     end
@@ -328,6 +341,7 @@ class ComponentTest < Minitest::Test
     obj = Class.new { def render_slot = "object-method" }.new
     mod = component_module do
       component :demo do
+        attr :obj
         template "<p>{@obj.render_slot}</p>"
       end
     end
@@ -351,6 +365,7 @@ class ComponentTest < Minitest::Test
     mod = component_module do
       def self.shout(s) = s.upcase
       component :loud do
+        attr :msg
         template "<p>{shout(@msg)}</p>"
       end
     end
@@ -372,6 +387,7 @@ class ComponentTest < Minitest::Test
   def test_recursive_component
     mod = component_module do
       component :tree do
+        attr :node
         template "<li>{@node[:name]}{if @node[:kids].any?}<ul>{@node[:kids].each do |k|}<.tree node={k}/>{end}</ul>{end}</li>"
       end
     end

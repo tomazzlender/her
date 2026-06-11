@@ -64,6 +64,7 @@ module UI
   end
 
   component :signup do
+    attr :verb, :string, required: true
     template <<~'HER'
       {= fieldset("Sign #{@verb}") do}
         <input name="email" type="email">

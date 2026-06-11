@@ -26,6 +26,7 @@ module UI
   # At a CALL site, direct <:name> children DEFINE slots; everything else
   # becomes :inner.
   component :page do
+    attr :at, :string, required: true
     template <<~'HER'
       <.panel>
         <:title>Quarterly <em>report</em></:title>

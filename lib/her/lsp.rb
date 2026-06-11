@@ -146,8 +146,7 @@ module Her
             Compiler.define(scratch, entry[1], text,
                             origin: { file: path, first_line: 1 },
                             attrs: attrs, kind: mod_meta[:kind],
-                            strict_html: mod_meta[:strict_html],
-                            require_contract: mod_meta[:require_contract])
+                            strict_html: mod_meta[:strict_html])
           else
             tokens = Tokenizer.new(text, file: path).tokenize
             Parser.new(tokens, file: path, source: text).parse
@@ -299,7 +298,7 @@ module Her
 
       def hover_markdown(mod, name, meta)
         out = +"**#{Her.module_label(mod)}.#{name}** — `#{meta[:file]}:#{meta[:first_line]}`\n"
-        if meta[:attrs]
+        if meta[:attrs]&.any?
           out << "\nAttrs:\n"
           meta[:attrs].each do |attr_name, spec|
             line = "- `#{attr_name}` #{Her.type_label(spec[:type])}"
@@ -309,7 +308,7 @@ module Her
             out << line << "\n"
           end
         else
-          out << "\nContract-free (assigns inferred from the template body).\n"
+          out << "\nDeclares no attrs (static template).\n"
         end
         slots = meta[:rendered_slots].to_a
         out << "\nSlots: #{slots.map { |s| "`#{s}`" }.join(', ')}\n" if slots.any?
@@ -372,8 +371,8 @@ module Her
       end
 
       def contract_summary(meta)
-        return " (contract-free)" unless meta[:attrs]
-        required = meta[:attrs].select { |_, spec| spec[:required] }.keys
+        attrs = meta[:attrs] || {}
+        required = attrs.select { |_, spec| spec[:required] }.keys
         required.any? ? " (requires #{required.map { |r| ":#{r}" }.join(', ')})" : ""
       end
 

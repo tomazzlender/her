@@ -143,7 +143,14 @@ class ErrorsTest < Minitest::Test
   end
 
   def test_unbalanced_control_flow_is_a_mapped_compile_error
-    error = compile_error("{if @x}<p>tags balance, flow does not</p>")
+    error = assert_raises(Her::CompileError) do
+      component_module do
+        component :demo do
+          attr :x
+          template "{if @x}<p>tags balance, flow does not</p>"
+        end
+      end
+    end
     assert_match(/invalid Ruby generated for/, error.message)
     assert_match(/control-flow holes/, error.message)
   end
@@ -202,27 +209,31 @@ class ErrorsTest < Minitest::Test
       end
     end
     error = assert_raises(Her::MissingAttr) { mod.button }
-    assert_match(/\A#{Regexp.escape(Her.module_label(mod))}\.button: missing required attribute :label\z/,
+    assert_match(/\A#{Regexp.escape(Her.module_label(mod))}\.button: missing required attribute :label \(assigns given: none\)\z/,
                  error.message)
   end
 
-  def test_missing_assign_lists_given_keys
+  def test_missing_attr_lists_given_keys
     mod = component_module do
-      component :free do
+      component :pair do
+        attr :a, required: true
+        attr :b, required: true
         template "<p>{@a}{@b}</p>"
       end
     end
-    error = assert_raises(Her::MissingAssign) { mod.free(a: 1, c: 3) }
-    assert_match(/missing assign :b \(assigns given: :a, :c\)/, error.message)
+    error = assert_raises(Her::MissingAttr) { mod.pair(a: 1, c: 3) }
+    assert_match(/missing required attribute :b \(assigns given: :a, :c\)/, error.message)
   end
 
-  def test_missing_assign_with_no_assigns
-    mod = component_module do
-      component :free do
-        template "<p>{@a}</p>"
+  def test_contractless_assign_references_fail_at_load
+    error = assert_raises(Her::CompileError) do
+      component_module do
+        component :free do
+          template "<p>{@a}</p>"
+        end
       end
     end
-    error = assert_raises(Her::MissingAssign) { mod.free }
-    assert_match(/assigns given: none/, error.message)
+    assert_match(/references undeclared attr @a/, error.message)
+    assert_match(/declares no attrs/, error.message)
   end
 end

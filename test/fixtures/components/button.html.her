@@ -1,1 +1,3 @@
+<%# attr :label, :string, required: true %>
+<%# attr :class, :string %>
 <button class={@class}>{@label}</button>

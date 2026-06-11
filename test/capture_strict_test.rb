@@ -23,6 +23,8 @@ class CaptureStrictTest < Minitest::Test
   def test_capture_appends_the_helpers_return_value
     mod = fieldset_module
     mod.component :form do
+      attr :body
+      attr :title
       template "{= fieldset(@title) do}<p>{@body}</p>{end}"
     end
     assert_equal "<fieldset><legend>T &amp; U</legend><p>b</p></fieldset>",
@@ -32,6 +34,7 @@ class CaptureStrictTest < Minitest::Test
   def test_capture_block_arguments_bind
     mod = fieldset_module
     mod.component :wrapped do
+      attr :wrap
       template "{= maybe_wrap(@wrap) do |cls|}<i class={cls}>x</i>{end}"
     end
     assert_equal %(<div><i class="inner-cls">x</i></div>), render(mod.wrapped(wrap: true))
@@ -41,6 +44,8 @@ class CaptureStrictTest < Minitest::Test
   def test_capture_contains_control_flow_and_nested_capture
     mod = fieldset_module
     mod.component :nested do
+      attr :inner
+      attr :msg
       template <<~'HER'
         {= fieldset("outer") do}
           {if @inner}
@@ -61,6 +66,7 @@ class CaptureStrictTest < Minitest::Test
       template %(<div class="card">{render_slot(:inner)}</div>)
     end
     mod.component :page do
+      attr :t
       template "<.card>{= fieldset(@t) do}body{end}</.card>"
     end
     assert_equal %(<div class="card"><fieldset><legend>L</legend>body</fieldset></div>),
@@ -81,6 +87,7 @@ class CaptureStrictTest < Minitest::Test
     error = assert_raises(Her::ParseError) do
       component_module do
         component :demo do
+          attr :x
           template "{= @x + 1}"
         end
       end
@@ -107,6 +114,7 @@ class CaptureStrictTest < Minitest::Test
   def test_strict_mode_accepts_nested_control_flow
     mod = component_module do
       component :ok, strict_html: true do
+        attr :items
         template "<ul>{@items.each do |i|}<li>{if i > 1}<b>{i}</b>{else}{i}{end}</li>{end}</ul>"
       end
     end
@@ -117,6 +125,8 @@ class CaptureStrictTest < Minitest::Test
     error = assert_raises(Her::CompileError) do
       component_module do
         component :wrapper, strict_html: true do
+          attr :text
+          attr :url
           template %q({if @url}<a href={@url}>{end}{@text}{if @url}</a>{end})
         end
       end
@@ -130,6 +140,7 @@ class CaptureStrictTest < Minitest::Test
     error = assert_raises(Her::CompileError) do
       component_module do
         component :crossed, strict_html: true do
+          attr :a
           template "{if @a}<span>{else}</span>{end}"
         end
       end
@@ -141,6 +152,7 @@ class CaptureStrictTest < Minitest::Test
     error = assert_raises(Her::CompileError) do
       component_module do
         component :open_ended, strict_html: true do
+          attr :a
           template "<div>{if @a}</div>"
         end
       end
@@ -152,6 +164,7 @@ class CaptureStrictTest < Minitest::Test
     error = assert_raises(Her::CompileError) do
       component_module do
         component :stray, strict_html: true do
+          attr :a
           template "<div>{if @a}</div>{end}"
         end
       end
@@ -162,6 +175,8 @@ class CaptureStrictTest < Minitest::Test
   def test_default_mode_still_allows_conditional_wrappers
     mod = component_module do
       component :wrapper do
+        attr :text
+        attr :url
         template %q({if @url}<a href={@url}>{end}{@text}{if @url}</a>{end})
       end
     end
@@ -173,6 +188,7 @@ class CaptureStrictTest < Minitest::Test
     error = assert_raises(Her::CompileError) do
       component_module do
         component :bad do
+          attr :a
           template "{if @a}<b>{end}</b>"
         end
       end
@@ -181,6 +197,7 @@ class CaptureStrictTest < Minitest::Test
 
     mod = component_module do
       component :opt_out, strict_html: false do
+        attr :a
         template "{if @a}<b>{end}x{if @a}</b>{end}"
       end
     end

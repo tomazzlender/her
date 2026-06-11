@@ -7,9 +7,8 @@ require_relative "ui"
 puts FileUI.user_card(name: "Ana", email: "ana@example.com")
 puts FileUI.alert(message: "Saved!", kind: "info")
 
-# user_card.html.her declares its own attrs in frontmatter, so even though
-# it came in through the contract-free embed_templates glob, the contract
-# is enforced:
+# user_card.html.her declares its attrs in frontmatter — the contract
+# lives in the template file and is enforced like any other:
 begin
   FileUI.user_card(name: "Ana")
 rescue Her::MissingAttr => e

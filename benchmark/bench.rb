@@ -88,9 +88,16 @@ module Bench
     template "<i {@rest}>x</i>"
   end
   component :nest do
+    attr :n, :integer, required: true
     template "<b>{if @n > 0}<.nest n={@n - 1}/>{else}leaf{end}</b>"
   end
   component :card do
+    attr :id, :string, required: true
+    attr :title, :string, required: true
+    attr :subtitle
+    attr :cta, :string, required: true
+    attr :items, :array, required: true
+    attr :rest, :global
     template CARD_TEMPLATE
   end
 end
@@ -101,12 +108,18 @@ puts "\nCompile (template -> defined method):"
 fresh = -> { Module.new { extend Her::Component } }
 
 time_once("tiny (1 element, 2 holes)") do
-  100.times { |i| fresh.().component(:"b#{i}") { template %(<button class={@class}>{@label}</button>) } }
+  100.times { |i| fresh.().component(:"b#{i}") { attr :class; attr :label; template %(<button class={@class}>{@label}</button>) } }
   print "  [x100] "
 end
 
 time_once("realistic card (14 lines)") do
-  100.times { |i| fresh.().component(:"c#{i}") { template CARD_TEMPLATE } }
+  100.times do |i|
+    fresh.().component(:"c#{i}") do
+      %i[id title subtitle cta items].each { |a| attr a }
+      attr :rest, :global
+      template CARD_TEMPLATE
+    end
+  end
   print "  [x100] "
 end
 
@@ -117,17 +130,20 @@ end
 
 hole_heavy = 1000.times.map { |i| "<p>{@a#{i % 10}}</p>" }.join("\n")
 time_once("hole-heavy (1000 holes)") do
-  fresh.().component(:holes) { template hole_heavy }
+  fresh.().component(:holes) do
+    10.times { |i| attr :"a#{i}" }
+    template hole_heavy
+  end
 end
 
 stmt_heavy = 500.times.map { |i| "{if @x}<p>#{i}</p>{end}" }.join("\n")
 time_once("statement-heavy (500 if/end pairs)") do
-  fresh.().component(:stmts) { template stmt_heavy }
+  fresh.().component(:stmts) { attr :x; template stmt_heavy }
 end
 
 time_once("module with 200 components") do
   m = fresh.()
-  200.times { |i| m.component(:"comp#{i}") { template %(<div class="x"><p>{@v}</p><.comp#{(i + 1) % 200} v={@v}/></div>) } }
+  200.times { |i| m.component(:"comp#{i}") { attr :v; template %(<div class="x"><p>{@v}</p><.comp#{(i + 1) % 200} v={@v}/></div>) } }
   $verify_target = m
 end
 
@@ -140,7 +156,7 @@ end
 
 puts "\nRender (compiled method calls):"
 small = fresh.()
-small.component(:s) { template %(<button class={@class}>{@label}</button>) }
+small.component(:s) { attr :class; attr :label; template %(<button class={@class}>{@label}</button>) }
 bench("tiny: 1 smart attr + 1 hole") { small.s(label: "Save", class: "btn") }
 
 card_args = { id: "c1", title: "Hello <World>", subtitle: nil, cta: "Go",
@@ -149,7 +165,7 @@ bench("realistic card (loop of 4, nested component)") { Bench.card(card_args) { 
 
 items100 = Array.new(100) { |i| "item #{i} & co" }
 loop_mod = fresh.()
-loop_mod.component(:l) { template "<ul>{@items.each do |i|}<li>{i}</li>{end}</ul>" }
+loop_mod.component(:l) { attr :items, :array; template "<ul>{@items.each do |i|}<li>{i}</li>{end}</ul>" }
 bench("loop over 100 escaped items") { loop_mod.l(items: items100) }
 
 items10k = Array.new(10_000) { |i| "item #{i} & co" }
@@ -182,7 +198,7 @@ fmt_source = (["<div class=\"wrap\">"] +
 time_once("format a #{fmt_source.lines.size}-line template") { Her::Formatter.format(fmt_source) }
 
 Dir.mktmpdir do |dir|
-  100.times { |i| File.write(File.join(dir, "t#{i}.html.her"), "<p>{@x} in template #{i}</p>\n") }
+  100.times { |i| File.write(File.join(dir, "t#{i}.html.her"), "<%# attr :x %>\n<p>{@x} in template #{i}</p>\n") }
   reload_mod = fresh.()
   reload_mod.embed_templates("*.html.her", dir: dir)
   time_once("reload_templates! over 100 file templates") { Her.reload_templates!(reload_mod) }

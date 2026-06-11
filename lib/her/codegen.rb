@@ -9,16 +9,14 @@ module Her
   # header). Compiler evals it with `lineno = first_line - 1`, which makes
   # every Ruby backtrace and SyntaxError point at the author's template line.
   class Codegen
-    def initialize(tree, name:, mode:, attrs: nil, module_label: nil, file: nil, first_line: 1,
-                   strict_html: false, contract_required: false)
+    def initialize(tree, name:, attrs:, module_label: nil, file: nil, first_line: 1,
+                   strict_html: false)
       @tree = tree
       @name = name
-      @mode = mode # :declared (component with attrs) or :free (§3c)
-      @attrs = attrs || {}
+      @attrs = attrs # contracts are mandatory; {} = static-only template
       @module_label = module_label
       @file = file
       @first_line = first_line
-      @contract_required = contract_required
 
       @out = +""
       @gen_line = 1        # template line the current output line corresponds to
@@ -79,33 +77,31 @@ module Her
 
     def header
       parts = ["def self.#{@name}(assigns = {}, __slots = nil, &__inner)"]
-      if @mode == :declared
-        @attrs.each do |key, opts|
-          next unless opts[:required]
-          parts << "assigns.key?(#{key.inspect}) or ::Her::MissingAttr.raise_for(self, #{@name.inspect}, #{key.inspect})"
-        end
-        if @attrs.any? { |_, opts| opts.key?(:default) }
-          parts << "assigns = __her_defaults(#{@name.inspect}).merge(assigns)"
-        end
-        # After the defaults merge, so a default (or explicit hash) becomes
-        # the base the collected attrs override.
-        if (global = @attrs.find { |_, opts| opts[:type] == :global })
-          declared_keys = (@attrs.keys - [global.first]).inspect
-          parts << "assigns = ::Her.collect_global(assigns, #{global.first.inspect}, #{declared_keys})"
-        end
-        # Symbol-typed attrs without values: compile to direct predicates —
-        # the contract is enforced everywhere at ~no cost. values: lists and
-        # Class/Module types go through the (rarer) helper below.
-        @attrs.each do |key, opts|
-          predicate = inline_type_predicate(opts)
-          next unless predicate
-          exempt = opts[:type] == :boolean ? "" : "__v.equal?(false) || "
-          parts << "((__v = assigns[#{key.inspect}]).nil? || #{exempt}#{predicate}) or " \
-                   "::Her.invalid_type!(self, #{@name.inspect}, #{key.inspect}, #{opts[:type].inspect}, __v)"
-        end
-        if @attrs.any? { |_, opts| opts[:values] || opts[:type].is_a?(Module) }
-          parts << "::Her.check_attrs!(self, #{@name.inspect}, assigns, __her_attr_checks(#{@name.inspect}))"
-        end
+      @attrs.each do |key, opts|
+        next unless opts[:required]
+        parts << "assigns.key?(#{key.inspect}) or ::Her::MissingAttr.raise_for(self, #{@name.inspect}, #{key.inspect}, assigns)"
+      end
+      if @attrs.any? { |_, opts| opts.key?(:default) }
+        parts << "assigns = __her_defaults(#{@name.inspect}).merge(assigns)"
+      end
+      # After the defaults merge, so a default (or explicit hash) becomes
+      # the base the collected attrs override.
+      if (global = @attrs.find { |_, opts| opts[:type] == :global })
+        declared_keys = (@attrs.keys - [global.first]).inspect
+        parts << "assigns = ::Her.collect_global(assigns, #{global.first.inspect}, #{declared_keys})"
+      end
+      # Symbol-typed attrs without values: compile to direct predicates —
+      # the contract is enforced everywhere at ~no cost. values: lists and
+      # Class/Module types go through the (rarer) helper below.
+      @attrs.each do |key, opts|
+        predicate = inline_type_predicate(opts)
+        next unless predicate
+        exempt = opts[:type] == :boolean ? "" : "__v.equal?(false) || "
+        parts << "((__v = assigns[#{key.inspect}]).nil? || #{exempt}#{predicate}) or " \
+                 "::Her.invalid_type!(self, #{@name.inspect}, #{key.inspect}, #{opts[:type].inspect}, __v)"
+      end
+      if @attrs.any? { |_, opts| opts[:values] || opts[:type].is_a?(Module) }
+        parts << "::Her.check_attrs!(self, #{@name.inspect}, assigns, __her_attr_checks(#{@name.inspect}))"
       end
       if @uses_slots
         parts << "__slots = __slots ? __slots.dup : {}"
@@ -340,24 +336,19 @@ module Her
     def rewrite(code, line, kind: nil)
       scan_slot_calls(code)
       RubyScanner.rewrite_hole_code(code, kind: kind) do |key|
-        if @mode == :declared
-          unless @attrs.key?(key)
-            declared = @attrs.keys.map(&:inspect).join(", ")
-            declared = "none" if declared.empty?
-            hint = if @contract_required && @attrs.empty?
-                     " — contracts are required (Her.require_contracts); declare attrs " \
-                     "in the component block or in template frontmatter"
-                   else
-                     ""
-                   end
-            raise CompileError,
-                  "#{label}: template references undeclared attr @#{key}#{origin(line)} " \
-                  "— declare it with `attr #{key.inspect}` (declared: #{declared})#{hint}"
-          end
-          "assigns[#{key.inspect}]"
-        else
-          "::Her.fetch!(assigns, #{key.inspect}, self, #{@name.inspect})"
+        unless @attrs.key?(key)
+          declared = @attrs.keys.map(&:inspect).join(", ")
+          hint = if declared.empty?
+                   "this component declares no attrs — declare them in the component " \
+                   "block or in template frontmatter (use assigns[#{key.inspect}] for " \
+                   "deliberately dynamic access)"
+                 else
+                   "declare it with `attr #{key.inspect}` (declared: #{declared})"
+                 end
+          raise CompileError,
+                "#{label}: template references undeclared attr @#{key}#{origin(line)} — #{hint}"
         end
+        "assigns[#{key.inspect}]"
       end
     rescue RubyScanner::IvarWriteError => e
       raise CompileError, "#{label}: #{e.message}#{origin(line)}"

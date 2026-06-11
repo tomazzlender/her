@@ -5,8 +5,10 @@ require_relative "test_helper"
 # Phase 6 (§8.5): control flow as statement holes — plain Ruby, no block tags.
 class ControlFlowTest < Minitest::Test
   def define(template_src)
+    referenced = template_src.scan(/@([a-z_][a-zA-Z0-9_]*)/).flatten.uniq
     component_module do
       component :demo do
+        referenced.each { |key| attr key.to_sym }
         template template_src
       end
     end

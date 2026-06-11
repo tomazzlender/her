@@ -7,8 +7,10 @@ require_relative "test_helper"
 # heuristic fallback. Prism-gated tests skip under HER_NO_PRISM / old rubies.
 class RubyAnalysisTest < Minitest::Test
   def define(template_src)
+    referenced = template_src.scan(/@([a-z_][a-zA-Z0-9_]*)/).flatten.uniq
     component_module do
       component :demo do
+        referenced.each { |key| attr key.to_sym }
         template template_src
       end
     end
