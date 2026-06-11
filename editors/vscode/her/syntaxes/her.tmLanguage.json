@@ -1,0 +1,99 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "HER (HTML Embedded Ruby)",
+  "scopeName": "text.html.her",
+  "fileTypes": ["her"],
+  "patterns": [
+    { "include": "#template-comment" },
+    { "include": "#html-comment" },
+    { "include": "#doctype" },
+    { "include": "#component-tag" },
+    { "include": "#html-tag" },
+    { "include": "#hole" },
+    { "include": "text.html.basic" }
+  ],
+  "repository": {
+    "template-comment": {
+      "name": "comment.block.her",
+      "begin": "<%#",
+      "end": "%>",
+      "beginCaptures": { "0": { "name": "punctuation.definition.comment.begin.her" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.comment.end.her" } }
+    },
+    "html-comment": {
+      "name": "comment.block.html",
+      "begin": "<!--",
+      "end": "-->"
+    },
+    "doctype": {
+      "name": "meta.tag.metadata.doctype.html",
+      "match": "<![^>]*>"
+    },
+    "hole": {
+      "name": "meta.embedded.block.ruby.her",
+      "begin": "\\{",
+      "end": "\\}",
+      "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.her" } },
+      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.her" } },
+      "patterns": [
+        { "include": "#nested-braces" },
+        { "include": "source.ruby" }
+      ]
+    },
+    "nested-braces": {
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [
+        { "include": "#nested-braces" },
+        { "include": "source.ruby" }
+      ]
+    },
+    "component-tag": {
+      "name": "meta.tag.component.her",
+      "begin": "(</?)((?:\\.[a-z_][a-zA-Z0-9_]*)|(?::[a-z_][a-zA-Z0-9_]*)|(?:[A-Z][a-zA-Z0-9_]*(?:::[A-Z][a-zA-Z0-9_]*)*\\.[a-z_][a-zA-Z0-9_]*))",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.her" },
+        "2": { "name": "entity.name.tag.component.her support.class.component.her" }
+      },
+      "end": "/?>",
+      "endCaptures": { "0": { "name": "punctuation.definition.tag.end.her" } },
+      "patterns": [{ "include": "#tag-innards" }]
+    },
+    "html-tag": {
+      "name": "meta.tag.html.her",
+      "begin": "(</?)([a-z][a-zA-Z0-9-]*)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.html" },
+        "2": { "name": "entity.name.tag.html" }
+      },
+      "end": "/?>",
+      "endCaptures": { "0": { "name": "punctuation.definition.tag.end.html" } },
+      "patterns": [{ "include": "#tag-innards" }]
+    },
+    "tag-innards": {
+      "patterns": [
+        { "include": "#hole" },
+        {
+          "name": "string.quoted.double.html",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [{ "include": "#hole" }]
+        },
+        {
+          "name": "string.quoted.single.html",
+          "begin": "'",
+          "end": "'",
+          "patterns": [{ "include": "#hole" }]
+        },
+        {
+          "name": "entity.other.attribute-name.her",
+          "match": "[a-zA-Z_:@][-a-zA-Z0-9_:.?!]*"
+        },
+        {
+          "name": "punctuation.separator.key-value.html",
+          "match": "="
+        }
+      ]
+    }
+  }
+}

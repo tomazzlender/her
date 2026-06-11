@@ -1,0 +1,45 @@
+{
+  "name": "her-language",
+  "displayName": "HER (HTML Embedded Ruby)",
+  "description": "Syntax highlighting and language-server client for .her templates",
+  "version": "0.1.0",
+  "publisher": "her-local",
+  "license": "MIT",
+  "engines": { "vscode": "^1.75.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onLanguage:her"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "her",
+        "aliases": ["HER", "her"],
+        "extensions": [".her"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "her",
+        "scopeName": "text.html.her",
+        "path": "./syntaxes/her.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "HER",
+      "properties": {
+        "her.bootFile": {
+          "type": "string",
+          "default": "",
+          "description": "Ruby file that loads your component modules, passed to `her lsp -r` (e.g. config/boot.rb). Empty: syntax diagnostics only."
+        },
+        "her.command": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["bundle", "exec", "her"],
+          "description": "How to invoke the her executable (use [\"her\"] for a global install)."
+        }
+      }
+    }
+  },
+  "dependencies": { "vscode-languageclient": "^9.0.0" }
+}

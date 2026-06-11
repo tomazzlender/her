@@ -748,13 +748,16 @@ Without `-r` it still provides syntax diagnostics. Saving a registered
 `.her` file hot-reloads it via `Her.reload_templates!`. Wire it up as a
 generic stdio language server for the `her` filetype in your editor.
 
-### Syntax highlighting
+### Editor wiring
 
+[`editors/README.md`](editors/README.md) has copy-paste setup for VS Code
+(a ready-made extension under `editors/vscode/her`), Neovim, Vim, Sublime
+Text, and Zed — both the language server and highlighting.
 `editors/her.tmLanguage.json` is a TextMate grammar for `.her` files —
 holes highlight as embedded Ruby, component (`<.button>`), slot
 (`<:title>`) and qualified (`<Icons.star>`) tags get their own scopes, and
-attribute holes work inside quoted values. Works in any
-TextMate-grammar-based editor (VS Code, Sublime, Zed).
+attribute holes work inside quoted values. Editors without TextMate
+support get a good approximation by treating `.her` as HTML.
 
 ### RuboCop cop
 
