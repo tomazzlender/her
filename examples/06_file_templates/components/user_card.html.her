@@ -1,3 +1,6 @@
+<%# A user card. The contract lives HERE, in the template file itself: %>
+<%# attr :name,  :string, required: true %>
+<%# attr :email, :string, required: true %>
 <div class="user-card">
   <h3>{@name}</h3>
   <p>{@email}</p>

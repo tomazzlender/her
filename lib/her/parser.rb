@@ -12,6 +12,8 @@ module Her
   # lambda, so a tag opened inside must close inside.
   class Parser
     TextNode = Struct.new(:value, :line, keyword_init: true)
+    # a <%# ... %> comment: emits nothing, owns its line for trimming
+    CommentNode = Struct.new(:line, keyword_init: true)
     # statement: nil for expression holes, else :open/:mid/:end/:block (§8.5)
     HoleNode = Struct.new(:code, :line, :statement, keyword_init: true)
     ElementNode = Struct.new(:name, :attrs, :children, :self_closing, :void, :line, :end_line, keyword_init: true)
@@ -48,6 +50,8 @@ module Her
             code: token.code, line: token.line,
             statement: classification.kind
           )
+        when :comment
+          parent.children << CommentNode.new(line: token.line)
         when :tag_open
           node = build_node(token, parent)
           parent.children << node

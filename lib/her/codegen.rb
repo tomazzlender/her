@@ -218,10 +218,16 @@ module Her
       end
     end
 
+    # Statement holes and template comments both emit nothing in place and
+    # should not leave blank lines behind.
+    def owns_line?(node)
+      (node.is_a?(Parser::HoleNode) && node.statement) || node.is_a?(Parser::CommentNode)
+    end
+
     def trim_statement_lines!(children, root:)
       trimmed = []
       children.each_with_index do |child, index|
-        next unless child.is_a?(Parser::HoleNode) && child.statement
+        next unless owns_line?(child)
         next unless line_start_before?(children, index, root, trimmed)
         next unless line_end_after?(children, index)
         trimmed << index
@@ -241,8 +247,8 @@ module Her
         value = prev_node.value
         value.match?(/\n[ \t]*\z/) || value.empty? ||
           (root && index == 1 && value.match?(/\A[ \t]*\z/))
-      when Parser::HoleNode
-        trimmed.include?(index - 1) # statements sharing an owned line
+      when Parser::HoleNode, Parser::CommentNode
+        trimmed.include?(index - 1) # statements/comments sharing an owned line
       else
         false
       end
@@ -256,8 +262,8 @@ module Her
       when Parser::TextNode
         next_node.value.match?(/\A[ \t]*\r?\n/) ||
           (children[index + 2].nil? && next_node.value.match?(/\A[ \t]*\z/))
-      when Parser::HoleNode
-        !!next_node.statement
+      when Parser::HoleNode, Parser::CommentNode
+        owns_line?(next_node)
       else
         false
       end
@@ -373,6 +379,7 @@ module Her
       when Parser::ElementNode    then walk_element(node)
       when Parser::ComponentNode  then walk_component(node)
       when Parser::SlotRenderNode then walk_slot_render(node)
+      when Parser::CommentNode    then nil # stripped from output
       when Parser::SlotDefNode
         raise CompileError,
               "#{label}: slot <:#{node.name}> must be a direct child of a component call#{origin(node.line)}"

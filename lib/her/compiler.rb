@@ -18,6 +18,20 @@ module Her
       first_line = origin.fetch(:first_line, 1)
       label = Her.module_label(mod)
 
+      # Template frontmatter (§12): leading <%# attr ... %> comments give
+      # the template its own contract. One source of truth: declaring attrs
+      # both in a component block and in frontmatter is an error.
+      frontmatter = Frontmatter.extract(source, file: file, first_line: first_line,
+                                                name: name, label: label)
+      if frontmatter
+        if attrs
+          raise CompileError,
+                "#{label}.#{name}: attrs are declared both in the component block and in " \
+                "the template frontmatter (#{file}) — declare them in one place"
+        end
+        attrs = frontmatter
+      end
+
       tokens = Tokenizer.new(source, file: file, first_line: first_line).tokenize
       tree = Parser.new(tokens, file: file, first_line: first_line, source: source).parse
       begin
@@ -61,6 +75,9 @@ module Her
         # set for file-based templates; Her.reload_templates! recompiles them
         template_path: template_path,
         strict_html: strict_html,
+        # when true, the contract lives in the template file itself and is
+        # re-extracted on reload instead of being passed back in
+        attrs_from_frontmatter: !frontmatter.nil?,
         defaults: attrs ? attrs.filter_map { |k, o| [k, o[:default]] if o.key?(:default) }.to_h.freeze : nil,
         # precomputed [[key, type, values], ...] for the non-inlinable
         # render-time checks (values: lists, Class/Module types)

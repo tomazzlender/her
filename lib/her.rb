@@ -9,6 +9,7 @@ require_relative "her/ruby_scanner"
 require_relative "her/tokenizer"
 require_relative "her/parser"
 require_relative "her/codegen"
+require_relative "her/frontmatter"
 require_relative "her/compiler"
 require_relative "her/component"
 require_relative "her/verify"
@@ -197,9 +198,12 @@ module Her
       mods.each do |mod|
         mod.__her_registry.each do |name, meta|
           path = meta[:template_path] or next
+          # frontmatter contracts are re-extracted from the file, so edits
+          # to the declarations take effect on reload too
+          attrs = meta[:attrs_from_frontmatter] ? nil : meta[:attrs]
           Compiler.define(mod, name, File.read(path),
                           origin: { file: path, first_line: 1 },
-                          attrs: meta[:attrs], kind: meta[:kind], template_path: path,
+                          attrs: attrs, kind: meta[:kind], template_path: path,
                           strict_html: meta[:strict_html])
           count += 1
         end

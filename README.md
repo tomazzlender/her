@@ -219,11 +219,31 @@ override the base directory.
 
 ### Contracts differ between the two — by design
 
-- **`embed_templates` is contract-free**, exactly like Phoenix. The template's
-  body is its contract: whatever `@foo` it references is what it needs.
-  Referencing a missing assign **raises** `Her::MissingAssign` at render time
-  (naming the component, the assign, and the keys you did pass) — it never
-  silently renders `nil`.
+- **`embed_templates` is contract-free by default**, exactly like Phoenix.
+  The template's body is its contract: whatever `@foo` it references is what
+  it needs. Referencing a missing assign **raises** `Her::MissingAssign` at
+  render time (naming the component, the assign, and the keys you did pass)
+  — it never silently renders `nil`.
+
+  A `.her` file can opt into the full contract itself, via **frontmatter** —
+  the same `attr` DSL inside leading `<%# %>` comments (think Rails 7.1
+  strict `locals:`, but with HER's types, values and `:global`; a deliberate
+  departure from Phoenix):
+
+  ```her
+  <%# attr :label, :string, required: true %>
+  <%# attr :kind, :string, values: %w[info warn], default: "info" %>
+  <span class="badge-{@kind}">{@label}</span>
+  ```
+
+  Frontmatter templates get everything the contract tier has: required and
+  type/values enforcement, load-time errors for undeclared `@attr`
+  references, `Her.verify!` call-site checks, and LSP completion — and
+  `Her.reload_templates!` re-reads the declarations, so editing the contract
+  never requires touching Ruby. Declarations must sit at the top of the file
+  (before any content); plain description comments can sit alongside them.
+  Declaring attrs both in a `component` block and in its template's
+  frontmatter is a load-time error — one source of truth.
 - **`component` adds an optional declared-attr tier.** Declaring any `attr`
   opts in: required attrs are checked on entry (`Her::MissingAttr`), defaults
   are merged, and referencing an *undeclared* `@attr` fails **at load time**
@@ -486,7 +506,8 @@ Rules worth knowing:
 - Uppercase tags must be qualified component calls; HTML tag names are
   lowercase (SVG's camelCase elements like `<linearGradient>` are fine).
 - `<!-- comments -->` and `<!DOCTYPE>` pass through verbatim (holes inside
-  comments are not evaluated). `<%# ... %>` comments are stripped from output.
+  comments are not evaluated). `<%# ... %>` comments are stripped from
+  output — a comment alone on its line takes the whole line with it.
   Other ERB `<%` tags are rejected with a hint.
 
 ### `<script>`, `<style>`, and opting in/out of `{}`
@@ -756,8 +777,6 @@ require:
 
 ## Roadmap / open questions
 
-- Frontmatter attr declarations in `.her` files — would give globbed templates
-  a contract; deliberately deferred until missing-assign errors prove painful.
 - Rails integration (renderable interface, helper access) — large, separate
   body of work; HER stays framework-agnostic until it's designed properly.
 

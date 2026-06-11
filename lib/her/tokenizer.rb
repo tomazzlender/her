@@ -13,6 +13,9 @@ module Her
     TagToken  = Struct.new(:type, :kind, :name, :attrs, :self_closing, :void, :line, :col, :end_line, keyword_init: true)
     TextToken = Struct.new(:type, :value, :line, :col, keyword_init: true)
     HoleToken = Struct.new(:type, :code, :line, :col, keyword_init: true)
+    # <%# ... %> template comments emit nothing but participate in
+    # line-trimming, so comment-only lines vanish from output.
+    CommentToken = Struct.new(:type, :line, :col, keyword_init: true)
     # value is nil (bare attribute) or one of:
     #   [:static, string, quote]   quote: '"', "'" or nil (unquoted)
     #   [:hole,   code]            whole-value hole  -> smart attribute
@@ -132,6 +135,7 @@ module Her
       if @s.match?(/<%#/)
         take(/<%#/)
         fail!("unclosed template comment <%# (expected %>)", line: line, col: col) unless take(/.*?%>/m)
+        @tokens << CommentToken.new(type: :comment, line: line, col: col)
       elsif @s.match?(/<%/)
         fail!("ERB-style <% tags are not supported; use {...} holes " \
               "(or <%# ... %> for a comment, &lt;% for literal text)")
