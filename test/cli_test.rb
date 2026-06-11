@@ -106,6 +106,16 @@ class CliTest < Minitest::Test
     end
   end
 
+  # A typo'd -r path is the first thing a new user hits; it must produce a
+  # one-line pointer, not a LoadError backtrace (exit 2: usage error, not a
+  # verification failure).
+  def test_check_with_missing_boot_file_fails_friendly
+    status, _, err = run_exe("check", "-r", "config/does_not_exist.rb")
+    assert_equal 2, status
+    assert_match(/no such boot file: config\/does_not_exist\.rb/, err)
+    refute_match(/LoadError|backtrace|\.rb:\d+:in/, err)
+  end
+
   def test_check_fails_on_verify_errors
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, "bad_app.rb"), <<~RUBY)

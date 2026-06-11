@@ -59,6 +59,59 @@ class EditorsTest < Minitest::Test
                     "ceiling from sinceBuild and newer IDEs refuse to install the plugin"
   end
 
+  # The plugin ships the grammar itself (TextMate bundleProvider EP), so
+  # installing it is enough for .her highlighting. Every piece of that wiring
+  # is stringly-typed across four files — keep them agreeing.
+  def test_intellij_plugin_ships_the_textmate_bundle
+    dir = File.join(ROOT, "editors", "intellij", "her")
+    resources = File.join(dir, "src", "main", "resources")
+
+    plugin_xml = File.read(File.join(resources, "META-INF", "plugin.xml"), encoding: "UTF-8")
+    assert_match(%r{<depends optional="true" config-file="her-textmate\.xml">org\.jetbrains\.plugins\.textmate</depends>},
+                 plugin_xml, "highlighting must not be required for the LSP half to load")
+
+    textmate_xml = File.read(File.join(resources, "META-INF", "her-textmate.xml"), encoding: "UTF-8")
+    implementation = textmate_xml[/textmate\.bundleProvider\s+implementation="([^"]+)"/, 1]
+    refute_nil implementation, "her-textmate.xml must register a textmate.bundleProvider"
+    package, _, class_name = implementation.rpartition(".")
+    provider_path = File.join(dir, "src", "main", "kotlin", *package.split("."), "#{class_name}.kt")
+    assert File.file?(provider_path), "her-textmate.xml references #{implementation} but #{provider_path} is missing"
+
+    provider = File.read(provider_path, encoding: "UTF-8")
+    assert_includes provider, "package #{package}"
+    assert_includes provider, "class #{class_name}"
+    # Each resource the provider extracts must exist in the plugin resources.
+    assert_includes provider, '"/textmate/her.tmbundle/$name"',
+                    "the provider must read resources from /textmate/her.tmbundle/"
+    files = provider[/FILES = listOf\(([^)]*)\)/m, 1]
+    refute_nil files, "the provider must declare its bundle files in FILES"
+    files.scan(/"([^"]+)"/).flatten.each do |rel|
+      assert File.file?(File.join(resources, "textmate", "her.tmbundle", rel)),
+             "#{class_name} extracts #{rel} but it is missing from resources/textmate/her.tmbundle/"
+    end
+
+    gradle = File.read(File.join(dir, "build.gradle.kts"))
+    assert_includes gradle, %(bundledPlugin("org.jetbrains.plugins.textmate")),
+                    "compiling against the bundleProvider EP needs the TextMate plugin dependency"
+  end
+
+  def test_intellij_bundled_grammar_stays_in_sync_with_canonical_json
+    require_relative "../tools/grammar_build"
+    expected = GrammarBuild.plist(File.read(File.join(ROOT, "editors", "her.tmLanguage.json")))
+    bundled = File.join(ROOT, "editors", "intellij", "her", "src", "main", "resources",
+                        "textmate", "her.tmbundle", "Syntaxes", "her.tmLanguage")
+    assert_equal expected, File.read(bundled),
+                 "the IntelliJ plugin's bundled grammar is generated — run `rake grammar`"
+  end
+
+  def test_intellij_bundle_info_plist_names_the_bundle
+    info = File.read(File.join(ROOT, "editors", "intellij", "her", "src", "main", "resources",
+                               "textmate", "her.tmbundle", "info.plist"))
+    assert info.start_with?("<?xml"), "info.plist must be an XML plist"
+    assert_match(%r{<key>name</key>\s*<string>HER</string>}, info)
+    assert_match(%r{<key>uuid</key>\s*<string>[0-9A-F-]{36}</string>}, info)
+  end
+
   def test_vscode_extension_manifest_references_existing_files
     dir = File.join(ROOT, "editors", "vscode", "her")
     manifest = JSON.parse(File.read(File.join(dir, "package.json")))

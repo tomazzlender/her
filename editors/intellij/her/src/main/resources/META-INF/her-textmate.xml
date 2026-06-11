@@ -1,0 +1,8 @@
+<idea-plugin>
+  <!-- Loaded only when the TextMate plugin (bundled in every IntelliJ-platform
+       IDE, but disableable) is present; registers the HER grammar so .her
+       files highlight out of the box. -->
+  <extensions defaultExtensionNs="com.intellij">
+    <textmate.bundleProvider implementation="dev.her.intellij.HerTextMateBundleProvider"/>
+  </extensions>
+</idea-plugin>

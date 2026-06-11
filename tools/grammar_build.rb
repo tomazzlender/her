@@ -9,6 +9,9 @@ require "json"
 #     which is what Sublime Text and TextMate load directly
 #   * editors/vscode/her/syntaxes/her.tmLanguage.json — the copy bundled in
 #     the VS Code extension
+#   * editors/intellij/her/src/main/resources/textmate/her.tmbundle/
+#     Syntaxes/her.tmLanguage — the copy of the plist build bundled in the
+#     IntelliJ plugin (its info.plist is static, not generated)
 #
 # Run `rake grammar` after editing the canonical file; the editors test
 # fails when the artifacts drift.
@@ -20,6 +23,8 @@ module GrammarBuild
     json = File.read(canonical)
     File.write(File.join(root, "editors", "her.tmLanguage"), plist(json))
     File.write(File.join(root, "editors", "vscode", "her", "syntaxes", "her.tmLanguage.json"), json)
+    File.write(File.join(root, "editors", "intellij", "her", "src", "main", "resources",
+                         "textmate", "her.tmbundle", "Syntaxes", "her.tmLanguage"), plist(json))
   end
 
   # TextMate grammars only contain strings, arrays and dicts, so a minimal

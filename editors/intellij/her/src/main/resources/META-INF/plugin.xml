@@ -6,6 +6,9 @@
   <depends>com.intellij.modules.platform</depends>
   <!-- The LSP API exists only in commercial IDEs (Ultimate, RubyMine, ...). -->
   <depends>com.intellij.modules.ultimate</depends>
+  <!-- Syntax highlighting rides on the bundled TextMate plugin; optional so
+       the LSP half still loads if a user disabled TextMate support. -->
+  <depends optional="true" config-file="her-textmate.xml">org.jetbrains.plugins.textmate</depends>
 
   <extensions defaultExtensionNs="com.intellij">
     <platform.lsp.serverSupportProvider

@@ -15,6 +15,8 @@ dependencies {
     intellijPlatform {
         // The LSP API ships only in commercial IDEs (Ultimate, RubyMine, ...).
         intellijIdeaUltimate("2024.2")
+        // For the TextMate bundleProvider EP (ships the grammar with the plugin).
+        bundledPlugin("org.jetbrains.plugins.textmate")
     }
 }
 
@@ -24,9 +26,9 @@ intellijPlatform {
         name = "HER (HTML Embedded Ruby)"
         version = "0.1.0"
         description = """
-            Language-server client for HER (.her) templates: diagnostics,
-            completion, hover and go-to-definition backed by `her lsp`.
-            Pair with a TextMate bundle for syntax highlighting.
+            HER (.her) template support: syntax highlighting via a bundled
+            TextMate grammar, plus diagnostics, completion, hover and
+            go-to-definition backed by `her lsp`.
         """.trimIndent()
         ideaVersion {
             sinceBuild = "242"

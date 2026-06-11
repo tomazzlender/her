@@ -12,7 +12,7 @@ desc "Regenerate derived grammar files from editors/her.tmLanguage.json"
 task :grammar do
   require_relative "tools/grammar_build"
   GrammarBuild.run(__dir__)
-  puts "wrote editors/her.tmLanguage and editors/vscode/her/syntaxes/her.tmLanguage.json"
+  puts "wrote editors/her.tmLanguage, the VS Code grammar copy, and the IntelliJ tmbundle grammar"
 end
 
 task default: :test

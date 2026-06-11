@@ -69,7 +69,7 @@ module Her
         warn "her check: pass your app entry point with -r FILE\n\n#{USAGE}"
         return 2
       end
-      load_requires(requires)
+      return 2 unless load_requires(requires)
       Her.verify!
       modules = Her.component_modules.size
       components = Her.component_modules.sum { |m| m.__her_registry.size }
@@ -94,7 +94,7 @@ module Her
         warn "her source: expected MOD.NAME (e.g. UI.button)\n\n#{USAGE}"
         return 2
       end
-      load_requires(requires)
+      return 2 unless load_requires(requires)
       mod_path, _, name = target.rpartition(".")
       mod = Object.const_get(mod_path)
       src = Her.generated_source(mod, name)
@@ -116,8 +116,18 @@ module Her
       requires.compact
     end
 
+    # Returns false (after a friendly message) when a boot file is missing,
+    # instead of letting a raw LoadError backtrace escape.
     def load_requires(requires)
-      requires.each { |path| require File.expand_path(path) }
+      requires.each do |path|
+        full = File.expand_path(path)
+        unless File.exist?(full)
+          warn "her: no such boot file: #{path}"
+          return false
+        end
+        require full
+      end
+      true
     end
   end
 end
