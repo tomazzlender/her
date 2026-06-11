@@ -20,17 +20,25 @@ module Her
 
       tokens = Tokenizer.new(source, file: file, first_line: first_line).tokenize
       tree = Parser.new(tokens, file: file, first_line: first_line, source: source).parse
-      codegen = Codegen.new(
-        tree,
-        name: name,
-        mode: attrs ? :declared : :free,
-        attrs: attrs,
-        module_label: label,
-        file: file,
-        first_line: first_line,
-        strict_html: strict_html
-      )
-      generated = codegen.generate
+      begin
+        codegen = Codegen.new(
+          tree,
+          name: name,
+          mode: attrs ? :declared : :free,
+          attrs: attrs,
+          module_label: label,
+          file: file,
+          first_line: first_line,
+          strict_html: strict_html
+        )
+        generated = codegen.generate
+      rescue SystemStackError
+        # The codegen walks recurse per nesting level; beyond ~2000 levels
+        # the VM stack runs out. No sane template gets near that.
+        raise CompileError,
+              "#{label}.#{name}: template nests too deeply to compile (more than ~2000 " \
+              "levels). If this is intentional, raise RUBY_THREAD_VM_STACK_SIZE."
+      end
 
       # Redefinition of a HER-defined component (collision rule §3d, code
       # reload) is intentional; drop the old method to avoid the warning.

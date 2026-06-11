@@ -157,6 +157,9 @@ module Her
           diagnostics << diagnostic(line, 1, e.message, 1)
         end
 
+        # Verify findings reflect the *registry* — the last-saved state —
+        # while the parse/compile pass above tracks the live buffer. didSave
+        # reloads the template first, so the two converge on every save.
         if verify && entry && diagnostics.empty?
           begin
             Her.verify(entry[0]).each do |issue|

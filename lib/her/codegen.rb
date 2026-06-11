@@ -287,7 +287,9 @@ module Her
     end
 
     def escape_for_dquote(str)
-      str.gsub(/[\\"#]/) { |c| "\\#{c}" }
+      # \r must be escaped: Ruby's lexer normalizes a literal CRLF inside
+      # eval'd source to LF, which would silently strip CRs from output.
+      str.gsub(/[\\"#\r]/) { |c| c == "\r" ? "\\r" : "\\#{c}" }
     end
 
     def fresh_var(prefix)

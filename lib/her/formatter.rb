@@ -43,7 +43,8 @@ module Her
         line = info[index + 1]
         content = raw.chomp
         if line.verbatim
-          out << content
+          # exact bytes, including a trailing \r — only the \n is re-added
+          out << raw.sub(/\n\z/, "")
         elsif content.strip.empty?
           # keep blank lines blank
         else

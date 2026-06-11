@@ -192,6 +192,55 @@ class LspTest < Minitest::Test
     assert_nil response["result"]
   end
 
+  # -- edge cases -------------------------------------------------------------------
+
+  def test_did_change_before_did_open_is_safe
+    (note,) = notify("textDocument/didChange",
+                     "textDocument" => { "uri" => "file:///tmp/never_opened.her" },
+                     "contentChanges" => [{ "text" => "<p>x</p>" }])
+    assert_empty note.dig("params", "diagnostics")
+  end
+
+  def test_completion_at_origin_of_empty_document
+    uri = "file:///tmp/empty.her"
+    open_doc(uri, "")
+    (response,) = request("textDocument/completion",
+                          "textDocument" => { "uri" => uri },
+                          "position" => { "line" => 0, "character" => 0 })
+    assert_equal [], response["result"]
+  end
+
+  def test_position_beyond_end_of_document
+    uri = "file:///tmp/short.her"
+    open_doc(uri, "<p>x</p>\n")
+    (response,) = request("textDocument/hover",
+                          "textDocument" => { "uri" => uri },
+                          "position" => { "line" => 99, "character" => 42 })
+    assert_nil response["result"]
+  end
+
+  def test_percent_encoded_uris_resolve_registered_files
+    Dir.mktmpdir("her sp ace") do |dir|
+      path = File.join(dir, "thing.html.her")
+      File.write(path, "<.nope_not_here/>\n")
+      mod = Module.new { extend Her::Component }
+      mod.embed_templates("*.html.her", dir: dir)
+      uri = "file://#{path.gsub(' ', '%20')}"
+      (note,) = open_doc(uri, File.read(path))
+      messages = note.dig("params", "diagnostics").map { |d| d["message"] }
+      assert(messages.any? { |m| m.include?("nope_not_here") },
+             "expected the %20 uri to resolve to the registered template")
+    end
+  end
+
+  def test_did_close_clears_diagnostics
+    uri = "file:///tmp/closing.her"
+    open_doc(uri, "<div>\n")
+    (note,) = notify("textDocument/didClose", "textDocument" => { "uri" => uri })
+    assert_equal "textDocument/publishDiagnostics", note["method"]
+    assert_empty note.dig("params", "diagnostics")
+  end
+
   def test_exit_stops_the_loop
     input = StringIO.new
     Her::LSP.write_message(input, { "jsonrpc" => "2.0", "id" => 1, "method" => "initialize", "params" => {} })

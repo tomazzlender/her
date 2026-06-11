@@ -664,11 +664,29 @@ require:
 - Rails integration (renderable interface, helper access) — large, separate
   body of work; HER stays framework-agnostic until it's designed properly.
 
+## Performance
+
+The pitch is the authoring model, not speed — but the league check holds:
+on the same 100-item escaped loop, HER renders within ~15% of *precompiled
+stdlib ERB* (both ~25–40µs/render; `ruby benchmark/bench.rb` to reproduce).
+Representative numbers on Ruby 3.3 (one core):
+
+- tiny component (smart attr + hole): ~1.7µs/render
+- realistic card (loop, nested component, slot, splat): ~12µs/render
+- 10,000-item loop: ~4.3ms, scaling linearly
+- compile: ~1ms per realistic component at boot; 1000-hole templates ~80ms
+- `Her.verify` on 200 components: under 1ms; formatter: ~30ms per 1200 lines
+
+Declared attr *types* add ~1µs/render for the guard (skip types on
+hot-path components if that ever matters). Templates nesting beyond ~2000
+levels fail compilation with a clear error — real documents nest ~50.
+
 ## Development
 
 ```sh
 bundle install
 rake test
+ruby benchmark/bench.rb
 ```
 
 ## License
