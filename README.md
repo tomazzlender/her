@@ -660,8 +660,8 @@ consciously:
 
 ## Limitations, by design or for now
 
-- **No LiveView.** One-shot rendering only: a component renders to a string,
-  the end. No change tracking, no diffing, no client runtime.
+- **One-shot rendering only.** A component renders to a string, the end.
+  No change tracking, no diffing, no client runtime.
 - `__`-prefixed locals (`__buf`, `__slots`, `__inner`) are reserved in holes.
 - Assign keys are symbols.
 - Defaults are static values, frozen at declaration (no lazy/proc defaults).
