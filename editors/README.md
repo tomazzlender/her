@@ -132,6 +132,26 @@ file type). Then the language server, via the
 }
 ```
 
+## JetBrains IDEs (IntelliJ IDEA, RubyMine)
+
+Highlighting works in all editions via the bundled TextMate support:
+`Settings → Editor → TextMate Bundles → +` and select this repo's
+`editors/vscode/her` directory (JetBrains IDEs import VS Code extension
+folders as bundles). Holes highlight as Ruby only if a Ruby TextMate
+bundle is also loaded; the HTML/component/slot structure highlights
+regardless.
+
+For the language server, two routes:
+
+- **Commercial IDEs (Ultimate, RubyMine):** build and install the thin
+  plugin in [`intellij/her/`](intellij/her) — it starts
+  `bundle exec her lsp` per project and reads the boot file from a
+  `.her-lsp` file at the project root (or `config/boot.rb` when present).
+- **Any edition, no build step:** install the
+  [LSP4IJ](https://plugins.jetbrains.com/plugin/23257-lsp4ij) plugin and
+  define a server: command `bundle exec her lsp -r config/boot.rb`,
+  file-name pattern `*.her`.
+
 ## Zed
 
 Zed uses tree-sitter, not TextMate grammars, and language servers attach

@@ -1,0 +1,14 @@
+<idea-plugin>
+  <id>dev.her.intellij</id>
+  <name>HER (HTML Embedded Ruby)</name>
+  <vendor>HER</vendor>
+
+  <depends>com.intellij.modules.platform</depends>
+  <!-- The LSP API exists only in commercial IDEs (Ultimate, RubyMine, ...). -->
+  <depends>com.intellij.modules.ultimate</depends>
+
+  <extensions defaultExtensionNs="com.intellij">
+    <platform.lsp.serverSupportProvider
+        implementation="dev.her.intellij.HerLspServerSupportProvider"/>
+  </extensions>
+</idea-plugin>

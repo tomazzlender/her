@@ -752,7 +752,8 @@ generic stdio language server for the `her` filetype in your editor.
 
 [`editors/README.md`](editors/README.md) has copy-paste setup for VS Code
 (a ready-made extension under `editors/vscode/her`), Neovim, Vim, Sublime
-Text, and Zed — both the language server and highlighting.
+Text, JetBrains IDEs (a thin LSP plugin under `editors/intellij/her`),
+and Zed — both the language server and highlighting.
 `editors/her.tmLanguage.json` is a TextMate grammar for `.her` files
 (with a plist build, `editors/her.tmLanguage`, for Sublime Text/TextMate) —
 holes highlight as embedded Ruby, component (`<.button>`), slot

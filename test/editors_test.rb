@@ -37,6 +37,21 @@ class EditorsTest < Minitest::Test
                  "editors/vscode/her/syntaxes/her.tmLanguage.json must be a copy of editors/her.tmLanguage.json"
   end
 
+  def test_intellij_plugin_xml_matches_the_kotlin_sources
+    dir = File.join(ROOT, "editors", "intellij", "her")
+    plugin_xml = File.read(File.join(dir, "src", "main", "resources", "META-INF", "plugin.xml"))
+    implementation = plugin_xml[/implementation="([^"]+)"/, 1]
+    refute_nil implementation, "plugin.xml must register an LSP server support provider"
+    package, _, class_name = implementation.rpartition(".")
+    source_path = File.join(dir, "src", "main", "kotlin", *package.split("."), "#{class_name}.kt")
+    assert File.file?(source_path), "plugin.xml references #{implementation} but #{source_path} is missing"
+    source = File.read(source_path)
+    assert_includes source, "package #{package}"
+    assert_includes source, "class #{class_name}"
+    assert_includes source, %(file.extension == "her")
+    assert_includes plugin_xml, "com.intellij.modules.ultimate" # LSP API is commercial-only
+  end
+
   def test_vscode_extension_manifest_references_existing_files
     dir = File.join(ROOT, "editors", "vscode", "her")
     manifest = JSON.parse(File.read(File.join(dir, "package.json")))

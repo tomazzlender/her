@@ -3,3 +3,6 @@
 /tmp/
 *.gem
 Gemfile.lock
+editors/intellij/her/build/
+editors/intellij/her/.gradle/
+editors/intellij/her/.intellijPlatform/
