@@ -105,7 +105,36 @@ UI.badge(count: 1)              # Her::MissingAttr:  UI.badge: missing required 
 UI.badge(label: "x", count: "3") # Her::InvalidAttr: attribute :count expected :integer, got String: "3"
 ```
 
-**3. Composition.** Components call components inside templates; attr
+Want contracts everywhere? `Her.require_contracts = true` makes a
+contract-less template that references assigns a load-time error.
+
+**3. One function, two call sites.** Every component is a plain module
+function — so the *same* `badge`, with the *same* contract, is callable
+from Ruby and from any template:
+
+```ruby
+# From Ruby — controllers, jobs, mailers, tests:
+UI.badge(label: "Inbox", count: unread_count)
+
+# From a template — same method, same enforcement:
+component :inbox_header do
+  attr :unread, :integer, required: true
+  template <<~'HER'
+    <header>
+      <h1>Mail</h1>
+      <.badge label="Inbox" count={@unread} kind="warn" data-tracking="hdr"/>
+    </header>
+  HER
+end
+```
+
+In template calls, attribute values are real Ruby values: `label="Inbox"`
+passes a String, `count={@unread}` passes whatever the expression yields,
+a bare attribute passes `true`. `UI.badge(...)` and `<.badge .../>` hit
+the identical compiled method — there is no separate "partial" or "tag"
+layer to learn, and `Her.verify!` checks the template call sites at boot.
+
+**4. Composition.** Components call components inside templates; attr
 values are real Ruby objects, and each component escapes its own output
 exactly once:
 
@@ -127,7 +156,7 @@ UI.toolbar(items: [{ label: "Save" }, { label: "Delete", disabled: true }])
 `disabled={...}` is a smart attribute: nil/false omit it, true renders it
 bare. Cross-module calls are `<Icons.star name="x"/>`.
 
-**4. Slots.** Markup flows *into* components — a default `:inner` slot,
+**5. Slots.** Markup flows *into* components — a default `:inner` slot,
 named slots with fallbacks, and `let` bindings for data-driven rows:
 
 ```ruby
@@ -150,7 +179,7 @@ component :page do
 end
 ```
 
-**5. A full page.** [`examples/07_full_page.rb`](examples/07_full_page.rb)
+**6. A full page.** [`examples/07_full_page.rb`](examples/07_full_page.rb)
 puts it all together — an HTML layout with nav/footer slots, a card grid
 driven by an array of hashes with conditional branches and splats, a form
 built with a capture helper — and ends with `Her.verify!`, which checks
@@ -244,6 +273,14 @@ override the base directory.
   (before any content); plain description comments can sit alongside them.
   Declaring attrs both in a `component` block and in its template's
   frontmatter is a load-time error — one source of truth.
+
+  To make contracts mandatory across the app, set `Her.require_contracts =
+  true` (or per definition: `component :x, require_contract: true`,
+  `embed_templates "...", require_contract: true`). A contract-less
+  template then compiles with an *empty* contract, so every `@x` reference
+  fails at load time with the exact attr to declare; purely static
+  templates remain legal, and `assigns[:key]` stays available for
+  deliberately dynamic access.
 - **`component` adds an optional declared-attr tier.** Declaring any `attr`
   opts in: required attrs are checked on entry (`Her::MissingAttr`), defaults
   are merged, and referencing an *undeclared* `@attr` fails **at load time**

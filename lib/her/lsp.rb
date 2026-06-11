@@ -142,11 +142,12 @@ module Her
             # Dry-run the real contract against a scratch module so unsaved
             # buffer text never clobbers the app's compiled method.
             scratch = Module.new { extend Her::Component }
-            attrs = mod_meta[:attrs_from_frontmatter] ? nil : mod_meta[:attrs]
+            attrs = mod_meta[:attrs_origin] == :block ? mod_meta[:attrs] : nil
             Compiler.define(scratch, entry[1], text,
                             origin: { file: path, first_line: 1 },
                             attrs: attrs, kind: mod_meta[:kind],
-                            strict_html: mod_meta[:strict_html])
+                            strict_html: mod_meta[:strict_html],
+                            require_contract: mod_meta[:require_contract])
           else
             tokens = Tokenizer.new(text, file: path).tokenize
             Parser.new(tokens, file: path, source: text).parse

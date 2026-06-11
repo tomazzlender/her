@@ -198,13 +198,14 @@ module Her
       mods.each do |mod|
         mod.__her_registry.each do |name, meta|
           path = meta[:template_path] or next
-          # frontmatter contracts are re-extracted from the file, so edits
-          # to the declarations take effect on reload too
-          attrs = meta[:attrs_from_frontmatter] ? nil : meta[:attrs]
+          # frontmatter/required contracts are re-derived from the file and
+          # the recorded policy, so editing declarations applies on reload
+          attrs = meta[:attrs_origin] == :block ? meta[:attrs] : nil
           Compiler.define(mod, name, File.read(path),
                           origin: { file: path, first_line: 1 },
                           attrs: attrs, kind: meta[:kind], template_path: path,
-                          strict_html: meta[:strict_html])
+                          strict_html: meta[:strict_html],
+                          require_contract: meta[:require_contract])
           count += 1
         end
       end
@@ -221,6 +222,14 @@ module Her
     # Global default for HEEx-style strict HTML validation (statements must
     # nest fully within elements). Per-definition strict_html: overrides.
     attr_accessor :strict_html
+
+    # When true, every component must declare its contract — via `attr` in
+    # the component block or template frontmatter. A contract-less template
+    # then compiles with an EMPTY contract, so each `@x` reference is a
+    # load-time error telling you what to declare; purely static templates
+    # remain legal, and `assigns[:key]` stays available for deliberately
+    # dynamic access. Per-definition require_contract: overrides.
+    attr_accessor :require_contracts
 
     private
 

@@ -10,7 +10,7 @@ module Her
   # every Ruby backtrace and SyntaxError point at the author's template line.
   class Codegen
     def initialize(tree, name:, mode:, attrs: nil, module_label: nil, file: nil, first_line: 1,
-                   strict_html: false)
+                   strict_html: false, contract_required: false)
       @tree = tree
       @name = name
       @mode = mode # :declared (component with attrs) or :free (§3c)
@@ -18,6 +18,7 @@ module Her
       @module_label = module_label
       @file = file
       @first_line = first_line
+      @contract_required = contract_required
 
       @out = +""
       @gen_line = 1        # template line the current output line corresponds to
@@ -343,9 +344,15 @@ module Her
           unless @attrs.key?(key)
             declared = @attrs.keys.map(&:inspect).join(", ")
             declared = "none" if declared.empty?
+            hint = if @contract_required && @attrs.empty?
+                     " — contracts are required (Her.require_contracts); declare attrs " \
+                     "in the component block or in template frontmatter"
+                   else
+                     ""
+                   end
             raise CompileError,
-                  "#{label}: template references undeclared attr @#{key}#{origin(line)} — " \
-                  "declare it with `attr #{key.inspect}` (declared: #{declared})"
+                  "#{label}: template references undeclared attr @#{key}#{origin(line)} " \
+                  "— declare it with `attr #{key.inspect}` (declared: #{declared})#{hint}"
           end
           "assigns[#{key.inspect}]"
         else
