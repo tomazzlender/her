@@ -104,6 +104,24 @@ class EditorsTest < Minitest::Test
                  "the IntelliJ plugin's bundled grammar is generated — run `rake grammar`"
   end
 
+  # A GUI-launched IDE's `bundle` and the terminal's `bundle` are routinely
+  # different programs (login vs interactive shell PATH; macOS ships
+  # /usr/bin/bundle). The descriptor must compensate with version-manager
+  # shims and offer a full command override — and the README must say so.
+  def test_intellij_lsp_descriptor_handles_gui_path_and_command_override
+    dir = File.join(ROOT, "editors", "intellij", "her")
+    source = File.read(File.join(dir, "src", "main", "kotlin", "dev", "her", "intellij",
+                                 "HerLspServerSupportProvider.kt"), encoding: "UTF-8")
+    %w[mise rbenv asdf].each do |manager|
+      assert_includes source, manager, "the descriptor must prepend #{manager} shims"
+    end
+    assert_includes source, '"boot:"'
+    assert_includes source, '"command:"'
+    readme = File.read(File.join(dir, "README.md"), encoding: "UTF-8")
+    assert_includes readme, "command:", "the README must document the .her-lsp command override"
+    assert_includes readme, "boot:"
+  end
+
   def test_intellij_bundle_info_plist_names_the_bundle
     info = File.read(File.join(ROOT, "editors", "intellij", "her", "src", "main", "resources",
                                "textmate", "her.tmbundle", "info.plist"))

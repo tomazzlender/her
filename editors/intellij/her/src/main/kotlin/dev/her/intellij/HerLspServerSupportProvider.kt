@@ -5,6 +5,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.platform.lsp.api.LspServerSupportProvider
 import com.intellij.platform.lsp.api.ProjectWideLspServerDescriptor
+import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -24,6 +25,42 @@ class HerLspServerSupportProvider : LspServerSupportProvider {
     }
 }
 
+/**
+ * Optional `.her-lsp` file at the project root, one setting per line
+ * (`#` comments allowed):
+ *
+ *     boot: config/boot.rb
+ *     command: bundle exec her
+ *
+ * `boot:` is the file passed to `her lsp -r` (it loads the project's
+ * component modules); a bare line means the same thing — the original
+ * format. `command:` replaces the base command (default: `bundle exec her`
+ * next to a Gemfile, plain `her` otherwise), split on whitespace, with
+ * `lsp -r BOOT` appended by the plugin — use absolute paths here when the
+ * IDE's environment can't see your Ruby setup.
+ */
+internal class HerLspConfig(val boot: String?, val command: List<String>?) {
+    companion object {
+        fun read(root: Path?): HerLspConfig {
+            val file = root?.resolve(".her-lsp")
+            if (file == null || !Files.exists(file)) return HerLspConfig(null, null)
+            var boot: String? = null
+            var command: List<String>? = null
+            for (raw in Files.readAllLines(file)) {
+                val line = raw.trim()
+                if (line.isEmpty() || line.startsWith("#")) continue
+                when {
+                    line.startsWith("boot:") -> boot = line.removePrefix("boot:").trim()
+                    line.startsWith("command:") ->
+                        command = line.removePrefix("command:").trim().split(Regex("\\s+"))
+                    boot == null -> boot = line
+                }
+            }
+            return HerLspConfig(boot, command)
+        }
+    }
+}
+
 class HerLspServerDescriptor(project: Project) :
     ProjectWideLspServerDescriptor(project, "HER") {
 
@@ -31,31 +68,51 @@ class HerLspServerDescriptor(project: Project) :
 
     override fun createCommandLine(): GeneralCommandLine {
         val root = project.basePath?.let(Path::of)
+        val config = HerLspConfig.read(root)
         val command = mutableListOf<String>()
-        if (root != null && Files.exists(root.resolve("Gemfile"))) {
-            command += listOf("bundle", "exec")
-        }
-        command += listOf("her", "lsp")
-        bootFile(root)?.let { command += listOf("-r", it) }
-        return GeneralCommandLine(command).withWorkDirectory(project.basePath)
+        command += config.command ?: defaultCommand(root)
+        command += "lsp"
+        (config.boot ?: defaultBoot(root))?.let { command += listOf("-r", it) }
+        val line = GeneralCommandLine(command).withWorkDirectory(project.basePath)
+        prependVersionManagerShims(line)
+        return line
     }
 
+    private fun defaultCommand(root: Path?): List<String> =
+        if (root != null && Files.exists(root.resolve("Gemfile"))) listOf("bundle", "exec", "her")
+        else listOf("her")
+
     /**
-     * The file passed to `her lsp -r`, which loads the project's component
-     * modules. Configured by a `.her-lsp` file at the project root whose
-     * first non-comment line is the boot path; falls back to config/boot.rb
-     * when that exists. Without one the server still provides syntax
-     * diagnostics.
+     * config/boot.rb when it exists; without a boot file the server still
+     * provides syntax diagnostics.
      */
-    private fun bootFile(root: Path?): String? {
-        root ?: return null
-        val configured = root.resolve(".her-lsp")
-        if (Files.exists(configured)) {
-            Files.readAllLines(configured)
-                .firstOrNull { it.isNotBlank() && !it.trimStart().startsWith("#") }
-                ?.trim()
-                ?.let { return it }
+    private fun defaultBoot(root: Path?): String? =
+        if (root != null && Files.exists(root.resolve("config").resolve("boot.rb"))) "config/boot.rb"
+        else null
+
+    /**
+     * GUI-launched IDEs capture the login-shell environment (~/.zprofile)
+     * but not interactive-shell config (~/.zshrc) — which is where version
+     * managers usually edit PATH. macOS then resolves `bundle` to the
+     * system /usr/bin/bundle, whose bundle has no `her` binstub:
+     * "bundler: command not found: her", exit 127, even though the same
+     * command works in a terminal. Shim directories re-resolve per working
+     * directory, so prepending the common ones is safe; `command:` in
+     * .her-lsp overrides when this guess is wrong.
+     */
+    private fun prependVersionManagerShims(line: GeneralCommandLine) {
+        val home = System.getProperty("user.home") ?: return
+        val shims = listOf(
+            Path.of(home, ".local", "share", "mise", "shims"),
+            Path.of(home, ".rbenv", "shims"),
+            Path.of(home, ".asdf", "shims"),
+        ).filter { Files.isDirectory(it) }.map(Path::toString)
+        if (shims.isEmpty()) return
+        val current = line.parentEnvironment["PATH"].orEmpty()
+        val present = current.split(File.pathSeparator)
+        val missing = shims.filterNot(present::contains)
+        if (missing.isNotEmpty()) {
+            line.environment["PATH"] = (missing + current).joinToString(File.pathSeparator)
         }
-        return if (Files.exists(root.resolve("config").resolve("boot.rb"))) "config/boot.rb" else null
     }
 }

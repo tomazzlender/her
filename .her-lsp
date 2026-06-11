@@ -1,3 +1,5 @@
-# Boot file for `her lsp` when this repo itself is opened as a project
-# (read by the IntelliJ plugin; other editors configure -r explicitly).
+# LSP client config when this repo itself is opened as a project (read by
+# the IntelliJ plugin; other editors configure -r explicitly). A bare line
+# is the boot file for `her lsp -r`; `boot:`/`command:` keys also work —
+# see editors/intellij/her/README.md.
 examples/sinatra_app/config/boot.rb

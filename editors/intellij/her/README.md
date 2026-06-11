@@ -41,15 +41,27 @@ breaks the LSP API at runtime, bump `intellijIdeaUltimate("2024.2")` in
 
 One process per project, in the project root:
 
-- `bundle exec her lsp ...` when a `Gemfile` exists at the root,
-  plain `her lsp ...` otherwise;
-- the boot file (`-r`, which loads your component modules) comes from a
-  `.her-lsp` file at the project root — its first non-comment line is
-  the path — or defaults to `config/boot.rb` when that file exists.
-  Without one you still get syntax diagnostics.
+- base command: `bundle exec her lsp ...` when a `Gemfile` exists at the
+  root, plain `her lsp ...` otherwise;
+- the boot file (`-r`, which loads your component modules) defaults to
+  `config/boot.rb` when that file exists. Without one you still get
+  syntax diagnostics;
+- PATH: the plugin prepends the shim directories of common Ruby version
+  managers (`~/.local/share/mise/shims`, `~/.rbenv/shims`,
+  `~/.asdf/shims`) when they exist, because GUI-launched IDEs usually
+  don't see PATH edits made in `~/.zshrc` (see Troubleshooting).
 
-```sh
-echo "app/boot.rb" > .her-lsp   # check it in; the whole team shares it
+Both are configurable with a `.her-lsp` file at the project root —
+check it in; the whole team shares it. One setting per line:
+
+```
+# the file `her lsp` loads with -r (a bare line means the same thing)
+boot: config/boot.rb
+
+# optional: replace the base command (split on whitespace; the plugin
+# appends `lsp -r BOOT`) — absolute paths welcome when the IDE's
+# environment can't see your Ruby setup
+command: bundle exec her
 ```
 
 ## Syntax highlighting
@@ -86,11 +98,26 @@ way).
   without a Gemfile) *in the project root*. Run the same command in a
   terminal at that directory — if it fails there, fix that first (most
   often: `bundle install` not run, or the boot file path is wrong).
-- IDEs launched from the dock/Finder don't always see version-manager
-  PATHs (mise, rbenv, asdf shims). If the command works in your terminal
-  but the IDE shows nothing, check `Help → Show Log in …` (idea.log) for
-  a spawn failure mentioning `bundle` or `her`, and launch the IDE from
-  a terminal once to compare.
+
+**`bundler: command not found: her` (exit 127) — but the same command
+works in your terminal.**
+
+The IDE is running a *different* `bundle` than your shell. GUI-launched
+IDEs capture the login-shell environment (`~/.zprofile`) but not
+interactive-shell config (`~/.zshrc`) — which is where mise, rbenv and
+asdf usually edit PATH — and macOS ships a system `/usr/bin/bundle`
+that then shadows yours. That bundler finds your Gemfile but its bundle
+has no `her` executable, hence the message. The plugin compensates by
+prepending the standard shim directories when they exist; if your Ruby
+lives somewhere else, pin the command in `.her-lsp`:
+
+```
+command: /opt/rubies/3.3.6/bin/bundle exec her
+```
+
+Alternatives that fix it IDE-wide: move the version-manager init from
+`~/.zshrc` to `~/.zprofile` and restart the IDE, or launch the IDE from
+a terminal (`idea .`), which inherits the terminal's PATH.
 - In *this* repo, the boot file is the example app's:
   the checked-in `.her-lsp` already points at
   `examples/sinatra_app/config/boot.rb`, so opening the repo root works.

@@ -138,6 +138,14 @@ file type). Then the language server, via the
 }
 ```
 
+If the server dies in a loop ("the her server has crashed 5 times"),
+open `LSP: Toggle Log Panel` for the real error. Exit code 127 /
+"command not found" means Sublime's PATH lacks your Ruby version
+manager — GUI-launched apps don't read `~/.zshrc`, and macOS's system
+`/usr/bin/bundle` shadows yours. Launch Sublime from a terminal once
+(`subl .`), use absolute paths in `"command"`, or move the
+version-manager init to `~/.zprofile`.
+
 ## JetBrains IDEs (IntelliJ IDEA, RubyMine)
 
 **Commercial IDEs (Ultimate, RubyMine):** build and install the thin
