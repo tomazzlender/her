@@ -8,7 +8,7 @@ module Her
       Usage: her COMMAND [options]
 
       Commands:
-        fmt [--check] FILE|DIR ...   format .her templates in place
+        format [--check] FILE|DIR .. format .her templates in place
                                      (--check: report only, exit 1 on diffs)
         check -r FILE [-r FILE ...]  load the app and run Her.verify!
         lsp [-r FILE ...]            run the language server on stdio
@@ -20,7 +20,7 @@ module Her
 
     def run(argv)
       case argv.first
-      when "fmt"     then fmt(argv.drop(1))
+      when "format"  then format_files(argv.drop(1))
       when "check"   then check(argv.drop(1))
       when "lsp"     then lsp(argv.drop(1))
       when "source"  then source(argv.drop(1))
@@ -31,7 +31,7 @@ module Her
       end
     end
 
-    def fmt(args)
+    def format_files(args)
       check = args.delete("--check") ? true : false
       paths = args.flat_map do |arg|
         if File.directory?(arg)
@@ -41,7 +41,7 @@ module Her
         end
       end
       if paths.empty?
-        warn "her fmt: no files given\n\n#{USAGE}"
+        warn "her format: no files given\n\n#{USAGE}"
         return 2
       end
 
@@ -53,10 +53,10 @@ module Her
           puts(check ? "would reformat #{path}" : "reformatted #{path}")
         end
       rescue ParseError => e
-        warn "her fmt: #{e.message}"
+        warn "her format: #{e.message}"
         failed = true
       rescue Errno::ENOENT
-        warn "her fmt: no such file: #{path}"
+        warn "her format: no such file: #{path}"
         failed = true
       end
       return 2 if failed

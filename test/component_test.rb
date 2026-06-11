@@ -317,7 +317,6 @@ class ComponentTest < Minitest::Test
   end
 
   def test_render_slot_command_form
-    skip "needs prism" unless Her::RubyScanner.prism?
     mod = component_module do
       component :box do
         template "<p>{render_slot :inner}</p>"

@@ -8,7 +8,7 @@ class CaptureStrictTest < Minitest::Test
 
   def fieldset_module
     component_module do
-      # A Rails-style capture helper: wraps its block's content.
+      # A capture-style helper: wraps its block's content.
       def self.fieldset(legend)
         Her.raw("<fieldset><legend>#{Her.safe(legend)}</legend>#{Her.safe(yield)}</fieldset>")
       end

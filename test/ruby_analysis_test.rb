@@ -2,9 +2,8 @@
 
 require_relative "test_helper"
 
-# Hole analysis: the Prism engine (real Ruby parser — exotic literals,
-# AST-exact rewriting, load-time validation) and behaviors shared with the
-# heuristic fallback. Prism-gated tests skip under HER_NO_PRISM / old rubies.
+# Hole analysis backed by Prism: exotic literals, AST-exact rewriting,
+# and load-time validation of the Ruby inside holes.
 class RubyAnalysisTest < Minitest::Test
   def define(template_src)
     referenced = template_src.scan(/@([a-z_][a-zA-Z0-9_]*)/).flatten.uniq
@@ -16,17 +15,7 @@ class RubyAnalysisTest < Minitest::Test
     end
   end
 
-  def prism?
-    Her::RubyScanner.prism?
-  end
-
-  # -- both engines -------------------------------------------------------------
-
-  def test_engine_selection_is_reported
-    assert_includes [true, false], prism?
-  end
-
-  def test_comment_in_expression_hole_does_not_eat_generated_code
+    def test_comment_in_expression_hole_does_not_eat_generated_code
     mod = define("<p>{@x # a note}</p><i>after</i>")
     assert_equal "<p>5</p><i>after</i>", render(mod.demo(x: 5))
   end
@@ -44,31 +33,26 @@ class RubyAnalysisTest < Minitest::Test
   # -- exotic literals terminate holes correctly (Prism) ---------------------------
 
   def test_percent_q_with_closing_brace
-    skip "needs prism" unless prism?
     mod = define("<p>{'a' + %q[}] + 'b'}</p>")
     assert_equal "<p>a}b</p>", render(mod.demo)
   end
 
   def test_regexp_with_closing_brace
-    skip "needs prism" unless prism?
     mod = define(%q(<p>{@s.sub(/\}/, "X")}</p>))
     assert_equal "<p>aXb</p>", render(mod.demo(s: "a}b"))
   end
 
   def test_heredoc_with_closing_brace_in_body
-    skip "needs prism" unless prism?
     mod = define("<p>{<<~T.strip\n  a}b\nT\n}</p>")
     assert_equal "<p>a}b</p>", render(mod.demo)
   end
 
   def test_percent_w_contents_are_not_assign_rewritten
-    skip "needs prism" unless prism?
     mod = define("<p>{%w[@a @b].join}</p>")
     assert_equal "<p>@a@b</p>", render(mod.demo)
   end
 
   def test_at_in_regexp_is_not_rewritten
-    skip "needs prism" unless prism?
     mod = define(%q(<p>{@s.match?(/@here/) ? "y" : "n"}</p>))
     assert_equal "<p>y</p>", render(mod.demo(s: "cc @here"))
   end
@@ -76,7 +60,6 @@ class RubyAnalysisTest < Minitest::Test
   # -- load-time validation of hole Ruby (Prism) ------------------------------------
 
   def test_invalid_expression_fails_at_load_with_parser_message
-    skip "needs prism" unless prism?
     decl_line = nil
     error = assert_raises(Her::ParseError) do
       component_module do
@@ -92,13 +75,11 @@ class RubyAnalysisTest < Minitest::Test
   end
 
   def test_comment_only_hole_is_rejected
-    skip "needs prism" unless prism?
     error = assert_raises(Her::ParseError) { define("<p>{# just a note}</p>") }
     assert_match(/contains no expression/, error.message)
   end
 
   def test_invalid_ruby_in_attribute_hole
-    skip "needs prism" unless prism?
     error = assert_raises(Her::CompileError) { define("<p class={@a +}>x</p>") }
     assert_match(/invalid Ruby in attribute `class`/, error.message)
   end
@@ -106,14 +87,12 @@ class RubyAnalysisTest < Minitest::Test
   # -- assigns are read-only (Prism) ---------------------------------------------------
 
   def test_assigning_to_an_assign_is_rejected
-    skip "needs prism" unless prism?
     error = assert_raises(Her::CompileError) { define("<p>{@x = 1}</p>") }
     assert_match(/cannot assign to @x/, error.message)
     assert_match(/read-only/, error.message)
   end
 
   def test_operator_assignment_is_rejected
-    skip "needs prism" unless prism?
     assert_raises(Her::CompileError) { define("<p>{@x ||= 1}</p>") }
   end
 
@@ -125,7 +104,6 @@ class RubyAnalysisTest < Minitest::Test
   # -- parse-based classification (Prism) -----------------------------------------------
 
   def test_complete_if_expression_renders_its_value
-    skip "needs prism" unless prism?
     mod = define(%q(<p>{if @on then "Y" else "N" end}</p>))
     assert_equal "<p>Y</p>", render(mod.demo(on: true))
     assert_equal "<p>N</p>", render(mod.demo(on: false))

@@ -33,47 +33,47 @@ class CliTest < Minitest::Test
     assert_match(/Usage: her/, err)
   end
 
-  def test_fmt_rewrites_files_and_reports
+  def test_format_rewrites_files_and_reports
     Dir.mktmpdir do |dir|
       path = File.join(dir, "a.her")
       File.write(path, "<div>\n<p>x</p>\n</div>\n")
-      status, out, = run_cli("fmt", path)
+      status, out, = run_cli("format", path)
       assert_equal 0, status
       assert_match(/reformatted #{Regexp.escape(path)}/, out)
       assert_equal "<div>\n  <p>x</p>\n</div>\n", File.read(path)
 
-      status, out, = run_cli("fmt", path) # second run: nothing to do
+      status, out, = run_cli("format", path) # second run: nothing to do
       assert_equal 0, status
       assert_empty out
     end
   end
 
-  def test_fmt_check_mode_exits_one_without_writing
+  def test_format_check_mode_exits_one_without_writing
     Dir.mktmpdir do |dir|
       path = File.join(dir, "a.her")
       File.write(path, "<div>\n<p>x</p>\n</div>\n")
-      status, out, = run_cli("fmt", "--check", path)
+      status, out, = run_cli("format", "--check", path)
       assert_equal 1, status
       assert_match(/would reformat/, out)
       assert_equal "<div>\n<p>x</p>\n</div>\n", File.read(path)
     end
   end
 
-  def test_fmt_expands_directories
+  def test_format_expands_directories
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, "a.her"), "<div>\n<p>x</p>\n</div>\n")
       File.write(File.join(dir, "b.html.her"), "<i>ok</i>\n")
-      status, out, = run_cli("fmt", dir)
+      status, out, = run_cli("format", dir)
       assert_equal 0, status
       assert_match(/a\.her/, out)
     end
   end
 
-  def test_fmt_reports_parse_errors_with_exit_two
+  def test_format_reports_parse_errors_with_exit_two
     Dir.mktmpdir do |dir|
       path = File.join(dir, "broken.her")
       File.write(path, "<div>\n")
-      status, _, err = run_cli("fmt", path)
+      status, _, err = run_cli("format", path)
       assert_equal 2, status
       assert_match(/unclosed tag/, err)
     end

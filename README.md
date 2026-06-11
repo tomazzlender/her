@@ -199,10 +199,9 @@ library.
 gem "her", github: "tomazzlender/her"
 ```
 
-Requires Ruby >= 3.1. No hard runtime dependencies: on Ruby 3.3+ HER uses
-the bundled Prism parser to analyze the Ruby inside `{...}` holes; on
-3.1/3.2 add `gem "prism"` to get the same, or HER falls back to a small
-built-in scanner (see Limitations).
+Requires Ruby >= 3.1. The only dependency is Prism, Ruby's own parser
+(bundled with Ruby 3.3+; installed as a gem automatically on 3.1/3.2),
+which HER uses to analyze the Ruby inside `{...}` holes.
 
 ## The two definition forms
 
@@ -255,9 +254,8 @@ override the base directory.
 ### Contracts differ between the two — by design
 
 - **`embed_templates` files declare their contract in frontmatter** — the
-  same `attr` DSL inside leading `<%# %>` comments (think Rails 7.1 strict
-  `locals:`, but with HER's types, values and `:global`; a deliberate
-  departure from Phoenix, whose embedded templates are contract-free):
+  same `attr` DSL inside leading `<%# %>` comments (a deliberate departure
+  from Phoenix, whose embedded templates are contract-free):
 
   ```her
   <%# attr :label, :string, required: true %>
@@ -324,13 +322,12 @@ for dynamic keys. Bare method calls in holes resolve against your module, so
 ```
 
 Hole results are HTML-escaped unless already trusted (see Escaping). The
-contents are plain Ruby. With Prism available (Ruby 3.3+), hole code is
-analyzed by the real Ruby parser: invalid expressions fail at load time with
-the parser's own message pointing at the template line, assigns are enforced
-read-only (`{@x = 1}` is a load error), and exotic literals (`%q[}]`,
-regexps, heredocs) terminate holes correctly. A complete `if ... end`
-expression in a hole renders its value; keyword *fragments* are control-flow
-statements (below).
+contents are plain Ruby, analyzed by Prism — the real Ruby parser: invalid
+expressions fail at load time with the parser's own message pointing at the
+template line, assigns are enforced read-only (`{@x = 1}` is a load error),
+and exotic literals (`%q[}]`, regexps, heredocs) terminate holes correctly.
+A complete `if ... end` expression in a hole renders its value; keyword
+*fragments* are control-flow statements (below).
 
 Two brace styles coexist by necessity: `{@x}` is a HER hole; `#{x}` is Ruby's
 own interpolation *inside a Ruby string inside a hole*:
@@ -558,7 +555,7 @@ Where the polish went (§7 of the build spec):
 | Wrong type / disallowed value for a declared attr | `UI.badge: attribute :count expected :integer, got String: "3"` at render |
 | Undeclared `@attr` in a contracted template | load-time error naming the attr, the fix, and the declared set |
 | Malformed template | `components/button.html.her:14:3: mismatched closing tag </div> — expected </span> (opened at ...)` at load, with the source line and a caret under the column |
-| Syntactically invalid Ruby in a hole | load-time error with the parser's message at the template line (Prism), e.g. `invalid Ruby in interpolation: expected an expression after the operator` |
+| Syntactically invalid Ruby in a hole | load-time error with the parser's message at the template line, e.g. `invalid Ruby in interpolation: expected an expression after the operator` |
 | Bad Ruby in a hole at runtime (`{@bio.upcase}` on nil) | the normal Ruby error, with a backtrace pointing at **the template file and line** (`profile.html.her:3`) |
 | Unbalanced control flow | load-time `CompileError` naming the component, with a hint |
 
@@ -581,9 +578,7 @@ the application has finished loading:
 ```ruby
 # in the test suite — effectively compile-time, since CI fails the build:
 def test_components_verify = Her.verify!
-
-# or after boot in Rails:
-config.after_initialize { Her.verify! unless Rails.env.production? }
+# (or call it from any after-boot hook in development)
 ```
 
 With no arguments it verifies every module that extended `Her::Component`
@@ -667,17 +662,12 @@ consciously:
 
 - **No LiveView.** One-shot rendering only: a component renders to a string,
   the end. No change tracking, no diffing, no client runtime.
-- Without Prism (Ruby 3.1/3.2 and no `prism` gem), hole analysis falls back
-  to a scanner that understands `"…"`/`'…'` strings (including nested `#{}`)
-  but not `%w[]`, regexps, or heredocs — on those rubies avoid unbalanced
-  braces, quotes, or `@word` inside such literals within a hole. With Prism
-  this limitation disappears.
 - `__`-prefixed locals (`__buf`, `__slots`, `__inner`) are reserved in holes.
 - Assign keys are symbols.
 - Defaults are static values, frozen at declaration (no lazy/proc defaults).
 - Buffer output already written before an expression raises stays written —
   `{begin}/{rescue}` has streaming semantics, like ERB.
-- Framework-agnostic: no Rails integration yet (see Roadmap).
+- Framework-agnostic by design: bring your own request layer.
 
 ## How it works
 
@@ -687,10 +677,9 @@ consciously:
 
 A hand-written scanner (no Temple — its IR pipeline fits indentation
 frontends, not component/slot semantics) tokenizes HTML, component/slot tags,
-and holes; the Ruby inside holes is analyzed with Prism when available —
-exact hole termination, AST-based `@assign` rewriting, load-time syntax
-validation — with a small heuristic scanner as fallback. A stack parser
-validates the tree; codegen emits a string-buffer method
+and holes; the Ruby inside holes is analyzed with Prism — exact hole
+termination, AST-based `@assign` rewriting, load-time syntax validation.
+A stack parser validates the tree; codegen emits a string-buffer method
 (`__buf << "static".freeze`, `__buf << Her.safe(expr)`); one `module_eval`
 per template defines the function. Compilation happens once at require time —
 renders never re-parse and never `eval`.
@@ -723,8 +712,8 @@ end
 ### The `her` CLI
 
 ```sh
-her fmt app/components            # format .her templates in place
-her fmt --check app/components    # CI mode: exit 1 if anything would change
+her format app/components          # format .her templates in place
+her format --check app/components   # CI mode: exit 1 if anything would change
 her check -r ./config/boot.rb     # load the app, run Her.verify!
 her lsp -r ./config/boot.rb       # language server on stdio
 her source -r ./boot.rb UI.button # print the generated Ruby
@@ -732,7 +721,7 @@ her source -r ./boot.rb UI.button # print the generated Ruby
 
 ### Formatter
 
-`her fmt` (or `Her::Formatter.format`) is a *safe* formatter: it re-indents
+`her format` (or `Her::Formatter.format`) is a *safe* formatter: it re-indents
 lines from the parsed structure but never moves content between lines, so it
 cannot change rendered semantics. Children indent two spaces; `{if}`/`{each
 do}` indent what follows; `{else}`/`{elsif}`/`{when}` outdent Ruby-style.
@@ -777,11 +766,6 @@ TextMate-grammar-based editor (VS Code, Sublime, Zed).
 require:
   - her/rubocop
 ```
-
-## Roadmap / open questions
-
-- Rails integration (renderable interface, helper access) — large, separate
-  body of work; HER stays framework-agnostic until it's designed properly.
 
 ## Performance
 

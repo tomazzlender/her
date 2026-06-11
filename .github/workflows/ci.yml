@@ -19,17 +19,3 @@ jobs:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
       - run: bundle exec rake test
-
-  # The hole-analysis fallback engine must keep passing even where Prism is
-  # bundled (3.1/3.2 jobs above exercise it natively).
-  heuristic-fallback:
-    runs-on: ubuntu-latest
-    env:
-      HER_NO_PRISM: "1"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.4"
-          bundler-cache: true
-      - run: bundle exec rake test

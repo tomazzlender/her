@@ -1,6 +1,13 @@
 # frozen_string_literal: true
 
 require "strscan"
+begin
+  require "prism"
+rescue LoadError
+  raise LoadError,
+        "HER requires the prism parser (bundled with Ruby 3.3+); " \
+        'on older rubies add `gem "prism"` to your bundle.'
+end
 
 module Her
   # The Ruby-understanding component of the compiler. Three jobs:
@@ -9,30 +16,13 @@ module Her
   #   * classify hole code as expression vs control-flow statement (§8.5),
   #   * rewrite the `@name` assign sigil (§4b).
   #
-  # Two engines back these. When Prism is available (bundled with Ruby 3.3+,
-  # or `gem "prism"` on older rubies) hole code is analyzed with the real
-  # Ruby parser: exotic literals (%q[], %w[], regexps, heredocs) terminate
-  # holes correctly, `@name` is rewritten by AST offsets (never inside
-  # string contents, comments or symbols), assigns are enforced read-only,
-  # and invalid Ruby fails at load time with the parser's own message.
-  #
-  # Without Prism a small hand-written scanner takes over: it understands
-  # `"…"`/`'…'` strings (including nested `#{}`) but not exotic literals —
-  # braces, quotes or `@` inside those may confuse it. Set HER_NO_PRISM=1
-  # to force the fallback engine (used in CI to test it).
+  # Hole code is analyzed with Prism, the real Ruby parser: exotic literals
+  # (%q[], %w[], regexps, heredocs) terminate holes correctly, `@name` is
+  # rewritten by AST offsets (never inside string contents, comments or
+  # symbols), assigns are enforced read-only, and invalid Ruby fails at
+  # load time with the parser's own message. A small string-aware scanner
+  # provides the fast path for hole termination.
   module RubyScanner
-    PRISM_AVAILABLE =
-      if ENV["HER_NO_PRISM"]
-        false
-      else
-        begin
-          require "prism"
-          defined?(Prism.parse) ? true : false
-        rescue LoadError
-          false
-        end
-      end
-
     # Raised (and re-raised with template context by codegen) when a
     # template tries to assign to an @assign. Prism engine only.
     class IvarWriteError < StandardError
@@ -45,8 +35,6 @@ module Her
     # (`{= helper do |x|}` — block result appended), or :invalid with the
     # parser's messages.
     Classification = Struct.new(:kind, :messages)
-
-    IVAR = /@[a-zA-Z_][a-zA-Z0-9_]*/
 
     STMT_OPEN  = /\A(?:if|unless|case|while|until|for|begin)\b/
     STMT_MID   = /\A(?:elsif|else|when|in|rescue|ensure)\b/
@@ -61,10 +49,6 @@ module Her
 
     module_function
 
-    def prism?
-      PRISM_AVAILABLE
-    end
-
     # -- hole termination -------------------------------------------------------
 
     # +rest+ is the source immediately after a hole's `{`. Returns the byte
@@ -78,7 +62,6 @@ module Her
         :ok
       end
       heuristic_end = status == :ok ? scanner.pos - 1 : nil
-      return heuristic_end unless prism?
 
       # Phase 2 (Prism): if the candidate ends mid-literal, the `}` we found
       # was inside an exotic literal — extend through successive raw `}`
@@ -115,8 +98,8 @@ module Her
     def classify(code)
       stripped = code.strip
       # `{= helper(...) do |x|}` — capture: the block builds the children
-      # and the helper's RETURN VALUE is appended (Rails-style capture
-      # semantics, which plain statement holes cannot express).
+      # and the helper's RETURN VALUE is appended (capture semantics, which
+      # plain statement holes cannot express).
       if stripped.start_with?("=") && !stripped.match?(/\A==|\A=~/)
         inner = stripped[1..].strip
         if inner.match?(BLOCK_TAIL)
@@ -127,12 +110,6 @@ module Her
       end
       return Classification.new(:end, nil) if stripped.match?(STMT_END)
       return Classification.new(:mid, nil) if stripped.match?(STMT_MID)
-
-      unless prism?
-        return Classification.new(:open, nil) if stripped.match?(STMT_OPEN)
-        return Classification.new(:block, nil) if stripped.match?(BLOCK_TAIL)
-        return Classification.new(nil, nil)
-      end
 
       result = Prism.parse(code)
       if result.success?
@@ -168,13 +145,12 @@ module Her
     # assignment to an @assign (Prism engine).
     def rewrite_hole_code(code, kind: nil, &replacement)
       return code if kind == :end
-      return rewrite_hole_code_heuristic(code, &replacement) unless prism?
 
       wrapped, shift = wrap_fragment(code, kind)
       result = Prism.parse(wrapped)
-      # Shouldn't happen — classification accepted this code — but degrade
-      # gracefully rather than fail.
-      return rewrite_hole_code_heuristic(code, &replacement) unless result.success?
+      # Shouldn't happen — classification accepted this code — but let
+      # module_eval report it with line mapping rather than failing here.
+      return code unless result.success?
 
       collector = RewriteCollector.new
       result.value.accept(collector)
@@ -248,64 +224,61 @@ module Her
       end
     end
 
-    if PRISM_AVAILABLE
-      # Collects @ivar reads (to rewrite), ivar writes (to reject), and bare
-      # render_slot/slot? calls (to thread the slot context through). The
-      # default visitor traverses children when we call super, so nodes
-      # inside `#{...}` interpolation are found while string text is not.
-      class RewriteCollector < Prism::Visitor
-        attr_reader :reads, :writes, :slot_calls
+    # Collects @ivar reads (to rewrite), ivar writes (to reject), and bare
+    # render_slot/slot? calls (to thread the slot context through). The
+    # default visitor traverses children when we call super, so nodes
+    # inside `#{...}` interpolation are found while string text is not.
+    class RewriteCollector < Prism::Visitor
+      attr_reader :reads, :writes, :slot_calls
 
-        def initialize
-          @reads = []
-          @writes = []
-          @slot_calls = []
-          super()
-        end
+      def initialize
+        @reads = []
+        @writes = []
+        @slot_calls = []
+        super()
+      end
 
-        def visit_call_node(node)
-          if node.receiver.nil? && (node.name == :render_slot || node.name == :slot?)
-            @slot_calls << node
-          end
-          super
+      def visit_call_node(node)
+        if node.receiver.nil? && (node.name == :render_slot || node.name == :slot?)
+          @slot_calls << node
         end
+        super
+      end
 
-        def visit_instance_variable_read_node(node)
-          @reads << node
-          super
-        end
+      def visit_instance_variable_read_node(node)
+        @reads << node
+        super
+      end
 
-        def visit_instance_variable_write_node(node)
-          @writes << node
-          super
-        end
+      def visit_instance_variable_write_node(node)
+        @writes << node
+        super
+      end
 
-        def visit_instance_variable_operator_write_node(node)
-          @writes << node
-          super
-        end
+      def visit_instance_variable_operator_write_node(node)
+        @writes << node
+        super
+      end
 
-        def visit_instance_variable_or_write_node(node)
-          @writes << node
-          super
-        end
+      def visit_instance_variable_or_write_node(node)
+        @writes << node
+        super
+      end
 
-        def visit_instance_variable_and_write_node(node)
-          @writes << node
-          super
-        end
+      def visit_instance_variable_and_write_node(node)
+        @writes << node
+        super
+      end
 
-        def visit_instance_variable_target_node(node)
-          @writes << node
-          super
-        end
+      def visit_instance_variable_target_node(node)
+        @writes << node
+        super
       end
     end
 
-    # == The heuristic engine =====================================================
-    # Used when Prism is unavailable, and internally for phase-1 hole
-    # termination and `#{}` recursion. Understands "…"/'…' strings (with
-    # nested interpolation) but not exotic literals.
+    # == The string-aware scanner =================================================
+    # The fast path for hole termination (phase 1) and `#{}` recursion;
+    # Prism arbitrates anything it misreads.
 
     # +scanner+ must be positioned just after an opening `{`. Consumes up to
     # and including the matching `}` and returns the code between them.
@@ -330,55 +303,6 @@ module Her
         end
       end
       on_eof.call
-    end
-
-    # Heuristic hole rewrite: `@name` reads and bare render_slot/slot? calls,
-    # skipping string contents (but descending into `#{...}`), comments,
-    # `@@class_vars`, and tokens preceded by a word character or receiver.
-    def rewrite_hole_code_heuristic(code, &replacement)
-      out = +""
-      catch(:her_scan_eof) do
-        eof = -> { throw :her_scan_eof }
-        scanner = StringScanner.new(code)
-        until scanner.eos?
-          if (chunk = scanner.scan(/[^"'@#a-z]+/))
-            out << chunk
-          elsif scanner.scan(/"/)
-            out << '"' << rewrite_double_quoted(scanner, eof, &replacement) << '"'
-          elsif scanner.scan(/'/)
-            out << "'" << consume_single_quoted(scanner, on_eof: eof) << "'"
-          elsif (comment = scanner.scan(/#[^\n]*/))
-            out << comment
-          elsif (ivar = scanner.scan(IVAR))
-            if out.match?(/[\w@]\z/)
-              out << ivar
-            else
-              out << replacement.call(ivar[1..].to_sym)
-            end
-          elsif (call = scanner.scan(/(?:render_slot|slot\?)(?![\w?])/))
-            if out.match?(/[\w.:@$]\z/) # receiver call, symbol, etc — not ours
-              out << call
-            else
-              out << heuristic_slot_call(call, scanner)
-            end
-          elsif (word = scanner.scan(/[a-z][a-zA-Z0-9_]*[!?]?/))
-            out << word
-          else
-            out << scanner.getch
-          end
-        end
-      end
-      out
-    end
-
-    # Heuristic counterpart of slot_call_edit: paren and bare forms only
-    # (the command form `render_slot :x` needs the Prism engine).
-    def heuristic_slot_call(name, scanner)
-      if scanner.scan(/\s*\(/)
-        "::Her.#{name}(__slots#{scanner.match?(/\s*\)/) ? '' : ', '}"
-      else
-        "::Her.#{name}(__slots)"
-      end
     end
 
     # -- internals ----------------------------------------------------------------

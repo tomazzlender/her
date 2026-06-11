@@ -29,7 +29,6 @@ module Her
     # since CI fails the build — or from an after-boot hook:
     #
     #   def test_components_verify = Her.verify!
-    #   config.after_initialize { Her.verify! unless Rails.env.production? }
     #
     # With no arguments every module that extended Her::Component is
     # verified. Warnings are printed; errors raise Her::VerifyError listing

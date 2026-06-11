@@ -1,9 +1,8 @@
 # frozen_string_literal: true
 
-# HER performance harness. Run with:
+# HER performance harness:
 #
-#   ruby benchmark/bench.rb               # Prism engine (Ruby 3.3+)
-#   HER_NO_PRISM=1 ruby benchmark/bench.rb
+#   ruby benchmark/bench.rb
 #
 # Times compilation, rendering at several scales, verification, formatting
 # and reloading. An escaped stdlib-ERB equivalent is included for one case
@@ -41,7 +40,7 @@ def bench(label, iterations: nil)
               label, iterations / elapsed, elapsed / iterations * 1_000_000)
 end
 
-puts "HER #{Her::VERSION} — engine: #{Her::RubyScanner.prism? ? "prism" : "heuristic"} — #{RUBY_DESCRIPTION}"
+puts "HER #{Her::VERSION} — #{RUBY_DESCRIPTION}"
 
 # -- fixtures --------------------------------------------------------------------
 
