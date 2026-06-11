@@ -61,6 +61,103 @@ The pitch is the authoring model, not speed. (Compiled templates are plenty fast
 each render is one method call appending frozen string literals — but so are
 Erubi and Phlex; template rendering is rarely your bottleneck.)
 
+## A tour, small to large
+
+Runnable versions of everything below live in [`examples/`](examples) —
+`ruby -Ilib examples/01_hello.rb` and up.
+
+**1. One component.** A template compiles at load time into a plain module
+function; rendering is calling it. Escaping is automatic:
+
+```ruby
+module UI
+  extend Her::Component
+
+  component :greeting do
+    template <<~'HER'
+      <h1>Hello, {@name}!</h1>
+    HER
+  end
+end
+
+UI.greeting(name: "world")          # => <h1>Hello, world!</h1>
+UI.greeting(name: "<script>")       # => <h1>Hello, &lt;script&gt;!</h1>
+UI.greeting({})                     # raises Her::MissingAssign — never silent nil
+```
+
+**2. A contract.** Declare attrs and the function enforces them — required
+at entry, types and values checked, typos in the template caught at load:
+
+```ruby
+component :badge do
+  attr :label, :string, required: true
+  attr :count, :integer, default: 0
+  attr :kind,  :string, values: %w[info warn danger], default: "info"
+  attr :rest,  :global   # collects data-*/aria-*/anything undeclared
+  template <<~'HER'
+    <span class="badge badge-{@kind}" {@rest}>{@label}{if @count > 0} ({@count}){end}</span>
+  HER
+end
+
+UI.badge(label: "Inbox", count: 3, "data-id": "b1")
+# => <span class="badge badge-info" data-id="b1">Inbox (3)</span>
+UI.badge(count: 1)              # Her::MissingAttr:  UI.badge: missing required attribute :label
+UI.badge(label: "x", count: "3") # Her::InvalidAttr: attribute :count expected :integer, got String: "3"
+```
+
+**3. Composition.** Components call components inside templates; attr
+values are real Ruby objects, and each component escapes its own output
+exactly once:
+
+```ruby
+component :toolbar do
+  attr :items, :array, required: true
+  template <<~'HER'
+    <nav class="toolbar">
+      {@items.each do |item|}
+        <.button label={item[:label]} disabled={item[:disabled]}/>
+      {end}
+    </nav>
+  HER
+end
+
+UI.toolbar(items: [{ label: "Save" }, { label: "Delete", disabled: true }])
+```
+
+`disabled={...}` is a smart attribute: nil/false omit it, true renders it
+bare. Cross-module calls are `<Icons.star name="x"/>`.
+
+**4. Slots.** Markup flows *into* components — a default `:inner` slot,
+named slots with fallbacks, and `let` bindings for data-driven rows:
+
+```ruby
+component :panel do
+  template <<~'HER'
+    <section class="panel">
+      <header><:title>Untitled</:title></header>
+      <div class="body">{render_slot(:inner)}</div>
+    </section>
+  HER
+end
+
+component :page do
+  template <<~'HER'
+    <.panel>
+      <:title>Quarterly <em>report</em></:title>
+      <p>Everything is fine.</p>
+    </.panel>
+  HER
+end
+```
+
+**5. A full page.** [`examples/07_full_page.rb`](examples/07_full_page.rb)
+puts it all together — an HTML layout with nav/footer slots, a card grid
+driven by an array of hashes with conditional branches and splats, a form
+built with a capture helper — and ends with `Her.verify!`, which checks
+every component call written in those templates at boot. That escalation
+path (template → contract → composition → slots → verified page) is the
+library.
+
 ## Installation
 
 ```ruby
@@ -677,9 +774,11 @@ Representative numbers on Ruby 3.3 (one core):
 - compile: ~1ms per realistic component at boot; 1000-hole templates ~80ms
 - `Her.verify` on 200 components: under 1ms; formatter: ~30ms per 1200 lines
 
-Declared attr *types* add ~1µs/render for the guard (skip types on
-hot-path components if that ever matters). Templates nesting beyond ~2000
-levels fail compilation with a clear error — real documents nest ~50.
+Declared attr types compile to inline predicates in the method header —
+about **0.1µs per typed attr** per render — so the contract belongs on
+every component, hot paths included. (`values:` lists and Class/Module
+types go through a helper, ~0.5µs.) Templates nesting beyond ~2000 levels
+fail compilation with a clear error — real documents nest ~50.
 
 ## Development
 
