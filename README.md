@@ -750,9 +750,21 @@ entry point with `-r` and you get:
 - **completion**: components after `<.`, their attrs (with type, required,
   default, values) inside the tag, slot names after `<:`;
 - **hover**: the component's contract; **go-to-definition**: jumps to the
-  `.her` file or the declaring Ruby line.
+  `.her` file or the declaring Ruby line;
+- **signature help**: the callee's attrs while you fill in a `<.tag …>`;
+- **find references** and **document highlight**: every `<.name>` /
+  `<Mod.name>` use of a component across the project;
+- **rename**: renames a component everywhere — usages, the `component :name`
+  declaration, and (for a file-backed component) its template file;
+- **document & workspace symbols**: outline a file's components and their
+  slots, or jump to any component by name (Cmd-T);
+- **format document**: runs the `her format` engine on `.her` files;
+- **show generated Ruby** (`her.showSource` command / `her source`): open the
+  code a component compiles to.
 
-All four work the same whether the template lives in a standalone `.her`
+The core navigation features (diagnostics, completion, hover, definition,
+signature help, references, rename) work the same whether the template lives
+in a standalone `.her`
 file or **inline** in a Ruby component (`template <<~HER … HER`, `%(…)`, or
 a quoted string) — the server locates each inline template with Prism and
 maps diagnostics back to the right line and column in the `.rb` file.

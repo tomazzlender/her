@@ -63,7 +63,7 @@ class LspTest < Minitest::Test
   end
 
   def test_unknown_request_errors_and_unknown_notification_is_ignored
-    (response,) = request("workspace/symbol")
+    (response,) = request("textDocument/somethingNotReal")
     assert_equal(-32_601, response.dig("error", "code"))
     assert_empty notify("workspace/didChangeNothing")
   end
@@ -402,6 +402,170 @@ class LspTest < Minitest::Test
       messages = note.dig("params", "diagnostics").map { |d| d["message"] }
       assert(messages.any? { |m| m.include?("nowhere_to_be_seen") },
              "expected the inline call to an unknown component to be flagged")
+    end
+  end
+
+  # -- symbols / signature / formatting / references / rename / source -------------
+
+  def test_document_symbol_lists_components_and_slots
+    Dir.mktmpdir do |dir|
+      project(dir)
+      uri = "file://#{File.join(dir, 'layout.html.her')}"
+      open_doc(uri, File.read(File.join(dir, "layout.html.her")))
+      (resp,) = request("textDocument/documentSymbol", "textDocument" => { "uri" => uri })
+      sym = resp["result"].find { |s| s["name"] == "layout" }
+      assert sym, "layout component should be listed"
+      assert_equal 12, sym["kind"]
+      child_names = (sym["children"] || []).map { |c| c["name"] }
+      assert_includes child_names, "side"
+    end
+  end
+
+  def test_workspace_symbol_query_filters_by_name
+    Dir.mktmpdir do |dir|
+      project(dir)
+      (resp,) = request("workspace/symbol", "query" => "butt")
+      names = resp["result"].map { |s| s["name"] }
+      assert_includes names, "button"
+      refute_includes names, "layout"
+    end
+  end
+
+  def test_signature_help_shows_the_contract
+    Dir.mktmpdir do |dir|
+      project(dir)
+      uri = "file://#{File.join(dir, 'page.html.her')}"
+      open_doc(uri, "<.chip ")
+      (resp,) = request("textDocument/signatureHelp",
+                        "textDocument" => { "uri" => uri }, "position" => { "line" => 0, "character" => 7 })
+      label = resp.dig("result", "signatures", 0, "label")
+      assert_match(/text:.*required/, label)
+      params = resp.dig("result", "signatures", 0, "parameters").map { |p| p["label"] }
+      assert(params.any? { |l| l.start_with?("text") })
+    end
+  end
+
+  def test_formatting_is_offered_and_idempotent
+    uri = "file:///tmp/fmt.her"
+    open_doc(uri, "<div>\n<span>x</span>\n</div>\n")
+    (resp,) = request("textDocument/formatting", "textDocument" => { "uri" => uri })
+    refute_empty resp["result"]
+    formatted = resp["result"].first["newText"]
+    open_doc(uri, formatted)
+    (resp2,) = request("textDocument/formatting", "textDocument" => { "uri" => uri })
+    assert_equal [], resp2["result"], "an already-formatted document yields no edits"
+  end
+
+  def test_formatting_skips_unparseable_template
+    uri = "file:///tmp/bad.her"
+    open_doc(uri, "<div>\n") # unclosed
+    (resp,) = request("textDocument/formatting", "textDocument" => { "uri" => uri })
+    assert_nil resp["result"]
+  end
+
+  def test_references_and_highlight_find_component_usages
+    Dir.mktmpdir do |dir|
+      project(dir)
+      page = File.join(dir, "page.html.her")
+      uri = "file://#{page}"
+      src = File.read(page) # "<.layout><p>x</p></.layout>\n"
+      open_doc(uri, src)
+      char = src.index("layout")
+
+      (refs,) = request("textDocument/references",
+                        "textDocument" => { "uri" => uri }, "position" => { "line" => 0, "character" => char })
+      page_refs = refs["result"].select { |r| r["uri"] == uri }
+      assert_equal 2, page_refs.size # the <.layout open and the </.layout> close
+      page_refs.each do |ref|
+        slice = src.lines[0][ref.dig("range", "start", "character")...ref.dig("range", "end", "character")]
+        assert_equal "layout", slice
+      end
+
+      (hl,) = request("textDocument/documentHighlight",
+                      "textDocument" => { "uri" => uri }, "position" => { "line" => 0, "character" => char })
+      assert_equal 2, hl["result"].size
+      assert(hl["result"].all? { |h| h["kind"] == 1 })
+    end
+  end
+
+  def test_prepare_rename_returns_the_name_range
+    Dir.mktmpdir do |dir|
+      project(dir)
+      uri = "file://#{File.join(dir, 'page.html.her')}"
+      src = File.read(File.join(dir, "page.html.her"))
+      open_doc(uri, src)
+      (resp,) = request("textDocument/prepareRename",
+                        "textDocument" => { "uri" => uri }, "position" => { "line" => 0, "character" => src.index("layout") })
+      assert_equal "layout", resp.dig("result", "placeholder")
+    end
+  end
+
+  def test_rename_file_backed_component_rewrites_usages_and_renames_the_file
+    Dir.mktmpdir do |dir|
+      project(dir)
+      page = File.join(dir, "page.html.her")
+      uri = "file://#{page}"
+      src = File.read(page)
+      open_doc(uri, src)
+      (resp,) = request("textDocument/rename", "textDocument" => { "uri" => uri },
+                                               "position" => { "line" => 0, "character" => src.index("layout") },
+                                               "newName" => "shell")
+      changes = resp.dig("result", "documentChanges")
+      text_change = changes.find { |c| c.dig("textDocument", "uri") == uri }
+      assert text_change
+      assert_equal 2, text_change["edits"].size
+      assert(text_change["edits"].all? { |e| e["newText"] == "shell" })
+      file_rename = changes.find { |c| c["kind"] == "rename" }
+      assert file_rename, "an embed/sibling component is named after its file, which must be renamed"
+      assert_match(%r{/shell\.html\.her\z}, file_rename["newUri"])
+    end
+  end
+
+  def test_rename_inline_component_rewrites_usage_and_declaration
+    Dir.mktmpdir do |dir|
+      path = inline_module_file(dir, <<~'BODY')
+          component :badge do
+            attr :text, :string, required: true
+            template %(<span>{@text}</span>)
+          end
+          component :wrap do
+            attr :title, :string
+            template <<~HER
+              <div><.badge text={@title}/></div>
+            HER
+          end
+      BODY
+      require path
+      uri = "file://#{path}"
+      buf = File.read(path)
+      open_doc(uri, buf)
+      badge_line = buf.lines.index { |l| l.include?("<.badge") }
+      (resp,) = request("textDocument/rename", "textDocument" => { "uri" => uri },
+                                               "position" => { "line" => badge_line, "character" => buf.lines[badge_line].index("badge") },
+                                               "newName" => "chip")
+      changes = resp.dig("result", "documentChanges")
+      edit = changes.find { |c| c.dig("textDocument", "uri") == uri }
+      assert edit
+      assert(edit["edits"].all? { |e| e["newText"] == "chip" })
+      assert_operator edit["edits"].size, :>=, 2 # the <.badge usage and the `component :badge` declaration
+      assert_nil changes.find { |c| c["kind"] == "rename" }, "an inline component has no template file to rename"
+    end
+  end
+
+  def test_execute_command_show_source_returns_generated_ruby
+    Dir.mktmpdir do |dir|
+      path = inline_module_file(dir, <<~'BODY')
+          component :tag do
+            attr :text, :string, required: true
+            template %(<b>{@text}</b>)
+          end
+      BODY
+      require path
+      uri = "file://#{path}"
+      open_doc(uri, File.read(path))
+      (resp,) = request("workspace/executeCommand", "command" => "her.showSource", "arguments" => [uri])
+      assert_kind_of String, resp["result"]
+      assert_match(/<b>/, resp["result"])
     end
   end
 

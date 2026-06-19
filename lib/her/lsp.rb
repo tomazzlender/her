@@ -124,6 +124,44 @@ module Her
                                  end_line: loc.start_line + [last, 0].max)
         end
       end
+
+      # A `component :name` declaration symbol and where its name sits (the
+      # colon excluded, so a rename keeps it). Used for go-to/rename of the
+      # declaration itself.
+      Declaration = Struct.new(:name, :line, :start_col, :end_col, keyword_init: true)
+
+      # Every `component :name`/`component(:name)` declaration in +source+.
+      # Prism-based, so `component :x` inside a string or comment is ignored.
+      def declarations(source)
+        result = Prism.parse(source)
+        return [] unless result.success?
+        finder = DeclFinder.new
+        result.value.accept(finder)
+        finder.declarations
+      rescue StandardError
+        []
+      end
+
+      class DeclFinder < Prism::Visitor
+        attr_reader :declarations
+
+        def initialize
+          @declarations = []
+          super()
+        end
+
+        def visit_call_node(node)
+          if node.receiver.nil? && node.name == :component
+            arg = node.arguments&.arguments&.first
+            if arg.is_a?(Prism::SymbolNode) && arg.value
+              loc = arg.value_loc
+              @declarations << Declaration.new(name: arg.value.to_sym, line: loc.start_line,
+                                               start_col: loc.start_column, end_col: loc.end_column)
+            end
+          end
+          super
+        end
+      end
     end
 
     class Server
@@ -178,9 +216,18 @@ module Her
           uri = params.dig("textDocument", "uri")
           @documents.delete(uri)
           [notification("textDocument/publishDiagnostics", "uri" => uri, "diagnostics" => [])]
-        when "textDocument/completion" then [response(id, completion(params))]
-        when "textDocument/hover"      then [response(id, hover(params))]
-        when "textDocument/definition" then [response(id, definition(params))]
+        when "textDocument/completion"        then [response(id, completion(params))]
+        when "textDocument/hover"             then [response(id, hover(params))]
+        when "textDocument/definition"        then [response(id, definition(params))]
+        when "textDocument/references"        then [response(id, references(params))]
+        when "textDocument/documentHighlight" then [response(id, document_highlights(params))]
+        when "textDocument/documentSymbol"    then [response(id, document_symbols(params))]
+        when "workspace/symbol"               then [response(id, workspace_symbols(params))]
+        when "textDocument/signatureHelp"     then [response(id, signature_help(params))]
+        when "textDocument/formatting"        then [response(id, formatting(params))]
+        when "textDocument/prepareRename"     then [response(id, prepare_rename(params))]
+        when "textDocument/rename"            then [response(id, rename(params))]
+        when "workspace/executeCommand"       then [response(id, execute_command(params))]
         else
           id ? [error_response(id, -32_601, "method not supported: #{method}")] : []
         end
@@ -194,7 +241,15 @@ module Her
             "textDocumentSync" => 1, # full content sync
             "completionProvider" => { "triggerCharacters" => ["<", ".", ":", " "] },
             "hoverProvider" => true,
-            "definitionProvider" => true
+            "definitionProvider" => true,
+            "referencesProvider" => true,
+            "documentHighlightProvider" => true,
+            "documentSymbolProvider" => true,
+            "workspaceSymbolProvider" => true,
+            "signatureHelpProvider" => { "triggerCharacters" => [" "] },
+            "documentFormattingProvider" => true,
+            "renameProvider" => { "prepareProvider" => true },
+            "executeCommandProvider" => { "commands" => ["her.showSource"] }
           },
           "serverInfo" => { "name" => "her-lsp", "version" => Her::VERSION }
         }
@@ -382,18 +437,25 @@ module Her
         _mod, _name, meta = find_component(uri, component_name)
         return [] unless meta && meta[:attrs]
         meta[:attrs].map do |attr_name, spec|
-          detail = +""
-          detail << "required " if spec[:required]
-          detail << Her.type_label(spec[:type])
-          detail << ", default: #{spec[:default].inspect}" if spec.key?(:default)
-          detail << ", values: #{spec[:values].map(&:inspect).join('|')}" if spec[:values]
           {
             "label" => attr_name.to_s,
             "kind" => 10, # Property
-            "detail" => detail,
+            "detail" => attr_detail(spec),
             "insertText" => "#{attr_name}="
           }
         end
+      end
+
+      # The human-readable contract for one attr, e.g. "required :string" or
+      # ":symbol, default: :a, values: :a|:b". Shared by completion, hover and
+      # signature help so they always read the same.
+      def attr_detail(spec)
+        detail = +""
+        detail << "required " if spec[:required]
+        detail << Her.type_label(spec[:type])
+        detail << ", default: #{spec[:default].inspect}" if spec.key?(:default)
+        detail << ", values: #{spec[:values].map(&:inspect).join('|')}" if spec[:values]
+        detail
       end
 
       def slot_items(uri, prefix, typed)
@@ -540,6 +602,332 @@ module Her
         attrs = meta[:attrs] || {}
         required = attrs.select { |_, spec| spec[:required] }.keys
         required.any? ? " (requires #{required.map { |r| ":#{r}" }.join(', ')})" : ""
+      end
+
+      # -- symbols --------------------------------------------------------------------
+
+      # The components a document defines, as DocumentSymbols (with their
+      # rendered slots as children). Sourced from the registry, so it works
+      # for .her files and inline .rb components alike.
+      def document_symbols(params)
+        path = LSP.uri_to_path(params.dig("textDocument", "uri"))
+        components_in_file(path).map do |name, meta|
+          point = symbol_point(meta)
+          symbol = { "name" => name.to_s, "detail" => contract_summary(meta).strip,
+                     "kind" => 12, "range" => point, "selectionRange" => point } # 12 = Function
+          children = (meta[:rendered_slots] || []).to_a.filter_map do |slot|
+            { "name" => slot.to_s, "kind" => 8, "range" => point, "selectionRange" => point } unless slot == :inner
+          end
+          symbol["children"] = children if children.any?
+          symbol
+        end
+      end
+
+      # Workspace-wide component search (Cmd-T), filtered by a substring query.
+      def workspace_symbols(params)
+        query = params["query"].to_s.downcase
+        symbols = []
+        each_registered_component do |mod, name, meta|
+          next unless query.empty? || name.to_s.downcase.include?(query)
+          symbols << { "name" => name.to_s, "kind" => 12, "containerName" => Her.module_label(mod),
+                       "location" => { "uri" => LSP.path_to_uri(meta[:file]), "range" => symbol_point(meta) } }
+        end
+        symbols
+      end
+
+      def symbol_point(meta)
+        line = [meta[:first_line].to_i - 1, 0].max
+        { "start" => { "line" => line, "character" => 0 }, "end" => { "line" => line, "character" => 0 } }
+      end
+
+      # -- signature help -------------------------------------------------------------
+
+      # While the cursor sits inside an open `<.name ...` tag, show the callee's
+      # contract — each attr with its type/required/default/values.
+      def signature_help(params)
+        uri = params.dig("textDocument", "uri")
+        text = @documents[uri] or return nil
+        return nil unless region_at(uri, params["position"])
+        name = unterminated_component_tag(text_before(text, params["position"])) or return nil
+        _mod, cname, meta = find_component(uri, name)
+        return nil unless meta
+
+        attrs = meta[:attrs] || {}
+        parameters = attrs.map { |attr_name, spec| { "label" => "#{attr_name}: #{attr_detail(spec)}" } }
+        label =
+          if attrs.empty?
+            "<.#{cname}> — no attrs"
+          else
+            "<.#{cname} #{attrs.map { |n, spec| "#{n}: #{attr_detail(spec)}" }.join(', ')}>"
+          end
+        {
+          "signatures" => [{ "label" => label,
+                             "documentation" => "#{meta[:file]}:#{meta[:first_line]}",
+                             "parameters" => parameters }],
+          "activeSignature" => 0,
+          "activeParameter" => 0
+        }
+      end
+
+      # -- formatting -----------------------------------------------------------------
+
+      # Format .her documents with Her::Formatter (the engine behind
+      # `her format`). Inline templates in .rb files are left untouched — their
+      # indentation belongs to the surrounding Ruby heredoc.
+      def formatting(params)
+        uri = params.dig("textDocument", "uri")
+        text = @documents[uri] or return nil
+        return nil unless LSP.uri_to_path(uri).end_with?(".her")
+        formatted =
+          begin
+            Formatter.format(text)
+          rescue ParseError
+            return nil # never reformat a template that doesn't parse
+          end
+        return [] if formatted == text
+        [{ "range" => { "start" => { "line" => 0, "character" => 0 },
+                        "end" => { "line" => text.count("\n") + 1, "character" => 0 } },
+           "newText" => formatted }]
+      end
+
+      # -- references / highlight / rename --------------------------------------------
+
+      # The reference grammar (same as resolve_at): `<.name>` / `</.name>` and
+      # qualified `<Mod.name>` / `</Mod.name>`.
+      USAGE_PATTERN = %r{</?(?:\.([a-z_]\w*)|([A-Z][\w:]*)\.([a-z_]\w*))}
+
+      def references(params)
+        mod, name = resolve_at(params)&.first(2)
+        return nil unless mod
+        component_usages(mod, name).map do |(path, line0, from, to)|
+          { "uri" => LSP.path_to_uri(path), "range" => point_range(line0, from, to) }
+        end
+      end
+
+      def document_highlights(params)
+        mod, name = resolve_at(params)&.first(2)
+        return nil unless mod
+        path = LSP.uri_to_path(params.dig("textDocument", "uri"))
+        component_usages(mod, name).filter_map do |(upath, line0, from, to)|
+          { "range" => point_range(line0, from, to), "kind" => 1 } if upath == path # 1 = Text
+        end
+      end
+
+      def prepare_rename(params)
+        uri = params.dig("textDocument", "uri")
+        text = @documents[uri] or return nil
+        line0 = params.dig("position", "line")
+        character = params.dig("position", "character")
+        line = text.lines[line0] or return nil
+
+        if region_at(uri, params["position"]) && (hit = usage_at(line, character))
+          name, from, to = hit
+          return { "range" => point_range(line0, from, to), "placeholder" => name }
+        end
+        if her_ruby_file?(LSP.uri_to_path(uri), text) && (decl = declaration_under(text, line0, character))
+          return { "range" => point_range(line0, decl.start_col, decl.end_col), "placeholder" => decl.name.to_s }
+        end
+        nil
+      end
+
+      # Rename a component everywhere: every `<.name>`/`<Mod.name>` usage, the
+      # `component :name` declaration symbol in Ruby, and — for a file-backed
+      # component named after its file — a workspace rename of that file.
+      def rename(params)
+        new_name = params["newName"].to_s
+        return nil unless new_name.match?(/\A[a-z_][a-zA-Z0-9_]*\z/)
+        mod, name, meta = resolve_at(params) || component_declaration_at(params)
+        return nil unless mod
+
+        edits = Hash.new { |hash, key| hash[key] = [] }
+        component_usages(mod, name).each do |(path, line0, from, to)|
+          edits[LSP.path_to_uri(path)] << { "range" => point_range(line0, from, to), "newText" => new_name }
+        end
+        declaration_edits(name.to_s, new_name).each { |uri, list| edits[uri].concat(list) }
+
+        changes = edits.map do |uri, list|
+          { "textDocument" => { "uri" => uri, "version" => nil }, "edits" => list.uniq }
+        end
+        if (file_change = template_file_rename(meta, name.to_s, new_name))
+          changes << file_change
+        end
+        { "documentChanges" => changes }
+      end
+
+      # Every workspace reference to a component, as [path, line0, from, to].
+      # A local `<.name>` matches in files that resolve `name` to this module;
+      # a remote `<Mod.name>` matches when Mod resolves to it.
+      def component_usages(target_mod, target_name)
+        target = target_name.to_s
+        opened = open_texts
+        results = []
+        candidate_files.each do |path|
+          text = opened[path] || read_template_file(path)
+          next unless text
+          owner = registry_entry_for(path)&.first
+          template_sources(path, text).each do |(body, base_line, base_col)|
+            body.each_line.with_index do |line, index|
+              line.to_enum(:scan, USAGE_PATTERN).each do
+                match = Regexp.last_match
+                matches =
+                  if match[1] then match[1] == target && local_resolves_to?(owner, match[1], target_mod)
+                  else match[3] == target && (remote = find_remote(match[2], match[3])) && remote[0].equal?(target_mod)
+                  end
+                next unless matches
+                referenced = match[1] || match[3]
+                from = (match.end(0) - referenced.length) + (index.zero? ? base_col : 0)
+                results << [path, (base_line - 1) + index, from, from + referenced.length]
+              end
+            end
+          end
+        end
+        results
+      end
+
+      # Edits renaming the `component :name` declaration symbol wherever it
+      # appears in Ruby (covers inline and explicit components).
+      def declaration_edits(name, new_name)
+        edits = Hash.new { |hash, key| hash[key] = [] }
+        opened = open_texts
+        candidate_files.each do |path|
+          next unless path.end_with?(".rb")
+          text = opened[path] || read_template_file(path)
+          next unless text
+          RubyTemplates.declarations(text).each do |decl|
+            next unless decl.name.to_s == name
+            edits[LSP.path_to_uri(path)] << { "range" => point_range(decl.line - 1, decl.start_col, decl.end_col), "newText" => new_name }
+          end
+        end
+        edits
+      end
+
+      # A workspace file rename for a component whose name is its basename
+      # (`name.html.her`/`name.her`), so embed/sibling naming stays correct.
+      def template_file_rename(meta, name, new_name)
+        path = meta && meta[:template_path]
+        return nil unless path
+        base = File.basename(path)
+        return nil unless base == "#{name}.html.her" || base == "#{name}.her"
+        new_base = "#{new_name}#{base[name.length..]}"
+        { "kind" => "rename", "oldUri" => LSP.path_to_uri(path),
+          "newUri" => LSP.path_to_uri(File.join(File.dirname(path), new_base)) }
+      end
+
+      def component_declaration_at(params)
+        uri = params.dig("textDocument", "uri")
+        path = LSP.uri_to_path(uri)
+        text = @documents[uri] or return nil
+        return nil unless her_ruby_file?(path, text)
+        decl = declaration_under(text, params.dig("position", "line"), params.dig("position", "character"))
+        decl ? find_component(uri, decl.name) : nil
+      end
+
+      # The component reference under the cursor on a line, as [name, from, to].
+      def usage_at(line, character)
+        line.to_enum(:scan, USAGE_PATTERN).each do
+          match = Regexp.last_match
+          name = match[1] || match[3]
+          return [name, match.end(0) - name.length, match.end(0)] if character >= match.begin(0) && character <= match.end(0)
+        end
+        nil
+      end
+
+      # The RubyTemplates::Declaration whose name the 0-based position lands on.
+      def declaration_under(text, line0, character)
+        RubyTemplates.declarations(text).find do |decl|
+          decl.line - 1 == line0 && character >= decl.start_col && character <= decl.end_col
+        end
+      end
+
+      # -- execute command ------------------------------------------------------------
+
+      # her.showSource — the Ruby HER generated for the component at a position
+      # (or the document's first component). The same output as `her source`.
+      def execute_command(params)
+        return nil unless params["command"] == "her.showSource"
+        uri, position = params["arguments"] || []
+        return nil unless uri
+        resolved = (resolve_at("textDocument" => { "uri" => uri }, "position" => position) if position)
+        resolved ||= document_component(uri)
+        return nil unless resolved
+        mod, name, _meta = resolved
+        Her.generated_source(mod, name)
+      end
+
+      # -- registry scan helpers ------------------------------------------------------
+
+      def each_registered_component
+        Her.component_modules.each do |mod|
+          mod.__her_registry.each { |name, meta| yield mod, name, meta }
+        end
+      end
+
+      def components_in_file(path)
+        components = []
+        each_registered_component do |_mod, name, meta|
+          components << [name, meta] if meta[:file] == path || meta[:template_path] == path
+        end
+        components.sort_by { |(_name, meta)| meta[:first_line].to_i }
+      end
+
+      def document_component(uri)
+        path = LSP.uri_to_path(uri)
+        name, meta = components_in_file(path).first
+        return nil unless meta
+        mod = Her.component_modules.find { |m| m.__her_registry[name].equal?(meta) }
+        mod ? [mod, name, meta] : nil
+      end
+
+      # Files that might hold templates: every registered component's source
+      # (file-backed .her and inline .rb origins) plus the open buffers.
+      def candidate_files
+        paths = []
+        each_registered_component do |_mod, _name, meta|
+          paths << meta[:template_path] if meta[:template_path]
+          paths << meta[:file] if meta[:file]
+        end
+        open_texts.each_key { |path| paths << path }
+        paths.uniq
+      end
+
+      # A file's template region(s) as [body, base_line, base_col]: a whole
+      # .her file is one region; a .rb file yields one per inline template.
+      def template_sources(path, text)
+        if path.end_with?(".rb")
+          return [] unless her_ruby_file?(path, text)
+          RubyTemplates.regions(text).map { |region| [region.body, region.start_line, region.start_col] }
+        elsif path.end_with?(".her")
+          [[text, 1, 0]]
+        else
+          []
+        end
+      end
+
+      def open_texts
+        @documents.each_with_object({}) { |(uri, text), map| map[LSP.uri_to_path(uri)] = text }
+      end
+
+      def read_template_file(path)
+        File.read(path, encoding: "UTF-8") if path && File.file?(path)
+      rescue SystemCallError
+        nil
+      end
+
+      # Does a local `<.name>` in a file owned by +owner+ resolve to
+      # +target_mod+? Mirrors find_component's order: the owner first, then the
+      # first module that defines the name.
+      def local_resolves_to?(owner, name, target_mod)
+        name = name.to_sym
+        if owner && owner.__her_registry.key?(name)
+          owner.equal?(target_mod)
+        else
+          Her.component_modules.find { |mod| mod.__her_registry.key?(name) }.equal?(target_mod)
+        end
+      end
+
+      def point_range(line0, from, to)
+        { "start" => { "line" => line0, "character" => from },
+          "end" => { "line" => line0, "character" => to } }
       end
 
       # -- plumbing -------------------------------------------------------------------

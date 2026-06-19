@@ -9,6 +9,9 @@
   "main": "./extension.js",
   "activationEvents": ["onLanguage:her", "onLanguage:ruby"],
   "contributes": {
+    "commands": [
+      { "command": "her.showSource", "title": "HER: Show Generated Ruby" }
+    ],
     "languages": [
       {
         "id": "her",

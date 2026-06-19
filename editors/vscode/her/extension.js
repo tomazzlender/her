@@ -5,7 +5,7 @@ const vscode = require("vscode");
 
 let client;
 
-function activate() {
+function activate(context) {
   let lc;
   try {
     lc = require("vscode-languageclient/node");
@@ -36,6 +36,25 @@ function activate() {
     { documentSelector: [{ language: "her" }, { language: "ruby" }] }
   );
   client.start();
+
+  // "HER: Show Generated Ruby" — asks the server for the Ruby HER compiled
+  // the component at the cursor to, and opens it beside the template.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("her.showSource", async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || !client) return;
+      const source = await client.sendRequest("workspace/executeCommand", {
+        command: "her.showSource",
+        arguments: [
+          editor.document.uri.toString(),
+          { line: editor.selection.active.line, character: editor.selection.active.character }
+        ]
+      });
+      if (!source) return;
+      const doc = await vscode.workspace.openTextDocument({ language: "ruby", content: source });
+      await vscode.window.showTextDocument(doc, { preview: true, viewColumn: vscode.ViewColumn.Beside });
+    })
+  );
 }
 
 function deactivate() {
