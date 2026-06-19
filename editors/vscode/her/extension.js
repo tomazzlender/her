@@ -31,7 +31,9 @@ function activate() {
       args,
       options: { cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath }
     },
-    { documentSelector: [{ language: "her" }] }
+    // .her templates plus Ruby files, so inline `template <<~HER`/`%(...)`
+    // templates embedded in component sources get the same features.
+    { documentSelector: [{ language: "her" }, { language: "ruby" }] }
   );
   client.start();
 }

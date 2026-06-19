@@ -16,7 +16,9 @@ module Her
   #
   # Features: diagnostics (parse/compile errors on every change; Her.verify
   # findings on open/save), completion (<. components, attrs inside a
-  # component tag, <: slots), hover, and go-to-definition.
+  # component tag, <: slots), hover, and go-to-definition. These work both in
+  # standalone .her files and in inline templates (`template <<~HER ... HER`,
+  # `%(...)`, or quoted strings) embedded in .rb component files.
   module LSP
     module_function
 
@@ -47,6 +49,81 @@ module Her
 
     def path_to_uri(path)
       "file://#{path}"
+    end
+
+    # Locates inline `template <literal>` bodies inside a Ruby source file so
+    # the server can offer for .rb files the same template features it offers
+    # for standalone .her files. Parses with Prism (already HER's Ruby parser
+    # via RubyScanner), so heredoc (`<<~HER`), percent (`%(...)`) and quoted
+    # inline templates are all found precisely, with the body's true line and
+    # column in the file.
+    module RubyTemplates
+      module_function
+
+      # One inline template body and where it sits in the Ruby file.
+      #   body       — the raw source between the literal's delimiters
+      #   start_line — 1-based file line of the body's first line
+      #   start_col  — 0-based column of the body's first character; applies to
+      #                the first body line only (later lines align with the file)
+      #   end_line   — 1-based file line of the body's last character
+      Region = Struct.new(:body, :start_line, :start_col, :end_line, keyword_init: true) do
+        # Is the given 0-based LSP line within this region?
+        def cover?(line0)
+          line1 = line0 + 1
+          line1 >= start_line && line1 <= end_line
+        end
+      end
+
+      # Every inline template region in +source+, in source order. Returns []
+      # when the buffer is not valid Ruby (mid-edit) so a transient parse
+      # error never takes the server's features down.
+      def regions(source)
+        result = Prism.parse(source)
+        return [] unless result.success?
+        finder = Finder.new
+        result.value.accept(finder)
+        finder.regions
+      rescue StandardError
+        []
+      end
+
+      # Collects the body location of every bare `template "<...>"` call
+      # (`receiver.nil?`, so `foo.template` is ignored).
+      class Finder < Prism::Visitor
+        attr_reader :regions
+
+        def initialize
+          @regions = []
+          super()
+        end
+
+        def visit_call_node(node)
+          record(node) if node.receiver.nil? && node.name == :template
+          super
+        end
+
+        private
+
+        def record(node)
+          arg = node.arguments&.arguments&.first
+          loc =
+            case arg
+            when Prism::StringNode
+              arg.content_loc
+            when Prism::InterpolatedStringNode # squiggly heredocs and #{} strings
+              parts = arg.parts
+              parts.first.location.join(parts.last.location) unless parts.empty?
+            end
+          return unless loc
+
+          body = loc.slice
+          newlines = body.count("\n")
+          last = body.end_with?("\n") ? newlines - 1 : newlines
+          @regions << Region.new(body: body, start_line: loc.start_line,
+                                 start_col: loc.start_column,
+                                 end_line: loc.start_line + [last, 0].max)
+        end
+      end
     end
 
     class Server
@@ -133,34 +210,20 @@ module Her
       def publish_diagnostics(uri, verify:)
         path = LSP.uri_to_path(uri)
         text = @documents[uri].to_s
-        diagnostics = []
         entry = registry_entry_for(path)
 
-        begin
-          if entry
-            mod_meta = entry[2]
-            # Dry-run the real contract against a scratch module so unsaved
-            # buffer text never clobbers the app's compiled method.
-            scratch = Module.new { extend Her::Component }
-            attrs = mod_meta[:attrs_origin] == :block ? mod_meta[:attrs] : nil
-            Compiler.define(scratch, entry[1], text,
-                            origin: { file: path, first_line: 1 },
-                            attrs: attrs, kind: mod_meta[:kind],
-                            strict_html: mod_meta[:strict_html])
+        diagnostics =
+          if path.end_with?(".rb")
+            her_ruby_file?(path, text) ? inline_diagnostics(path, text) : []
           else
-            tokens = Tokenizer.new(text, file: path).tokenize
-            Parser.new(tokens, file: path, source: text).parse
+            template_diagnostics(path, text, entry)
           end
-        rescue ParseError => e
-          diagnostics << diagnostic(e.line, e.column, e.message, 1)
-        rescue CompileError => e
-          line = e.message[/\(#{Regexp.escape(path)}:(\d+)\)/, 1]&.to_i || 1
-          diagnostics << diagnostic(line, 1, e.message, 1)
-        end
 
         # Verify findings reflect the *registry* — the last-saved state —
         # while the parse/compile pass above tracks the live buffer. didSave
-        # reloads the template first, so the two converge on every save.
+        # reloads file templates first, so the two converge on every save.
+        # Inline templates carry meta[:file], so an entry resolves for .rb
+        # files too and their call-site findings are file-absolute already.
         if verify && entry && diagnostics.empty?
           begin
             Her.verify(entry[0]).each do |issue|
@@ -174,6 +237,92 @@ module Her
 
         notification("textDocument/publishDiagnostics",
                      "uri" => uri, "diagnostics" => diagnostics)
+      end
+
+      # Diagnostics for a standalone .her document: the whole file is one
+      # template, checked against its registered contract when there is one.
+      def template_diagnostics(path, text, entry)
+        diagnostics = []
+        begin
+          check_template(text, path, first_line: 1, name: entry&.at(1), meta: entry&.at(2))
+        rescue ParseError => e
+          diagnostics << diagnostic(e.line, e.column, e.message, 1)
+        rescue CompileError => e
+          line = e.message[/\(#{Regexp.escape(path)}:(\d+)\)/, 1]&.to_i || 1
+          diagnostics << diagnostic(line, 1, e.message, 1)
+        end
+        diagnostics
+      end
+
+      # Diagnostics for every inline `template <...>` body in a Ruby file.
+      # Each region is checked on its own and positions are mapped back to the
+      # Ruby file: parse/compile error lines are already file-absolute (the
+      # tokenizer/parser are told the body's first_line) and a first-line
+      # column gets the body's start column added. A region matched to a
+      # registered component is checked against its real contract; an
+      # unmatched one (new/unsaved) falls back to a syntax-only check,
+      # mirroring how a .her file degrades without a registry entry.
+      def inline_diagnostics(path, text)
+        entries = inline_entries_for(path)
+        diagnostics = []
+        RubyTemplates.regions(text).each_with_index do |region, i|
+          name, meta = entries[i]
+          begin
+            check_template(region.body, path, first_line: region.start_line, name: name, meta: meta)
+          rescue ParseError => e
+            column = e.column.to_i
+            column += region.start_col if e.line == region.start_line
+            diagnostics << diagnostic(e.line, column, e.message, 1)
+          rescue CompileError => e
+            line = e.message[/\(#{Regexp.escape(path)}:(\d+)\)/, 1]&.to_i || region.start_line
+            diagnostics << diagnostic(line, 1, e.message, 1)
+          end
+        end
+        diagnostics
+      end
+
+      # Parse a template body, and — when its contract is known — compile it
+      # too, so undeclared-attr and other contract errors surface live. The
+      # compile runs against a throwaway module that is deregistered right
+      # after, so it never shadows the real component in file-keyed lookups
+      # (and editing never leaks modules). Raises ParseError/CompileError.
+      def check_template(source, path, first_line:, name:, meta:)
+        unless meta
+          tokens = Tokenizer.new(source, file: path, first_line: first_line).tokenize
+          return Parser.new(tokens, file: path, first_line: first_line, source: source).parse
+        end
+
+        scratch = Module.new { extend Her::Component }
+        begin
+          attrs = meta[:attrs_origin] == :block ? meta[:attrs] : nil
+          Compiler.define(scratch, name || :__lsp_check__, source,
+                          origin: { file: path, first_line: first_line },
+                          attrs: attrs, kind: meta[:kind], strict_html: meta[:strict_html])
+        ensure
+          Her.__deregister_component_module(scratch)
+        end
+      end
+
+      # Registered inline components declared in this Ruby file, as
+      # [name, meta] pairs in source order — zipped positionally with the
+      # regions found in the buffer so a region can be checked against its
+      # real contract. Only the contract (line-independent) is taken from
+      # here, so line shifts from unsaved edits don't matter and a mismatch
+      # simply degrades to a syntax check.
+      def inline_entries_for(path)
+        Her.component_modules.flat_map do |mod|
+          mod.__her_registry.filter_map do |name, meta|
+            [name, meta] if meta[:file] == path && meta[:template_path].nil?
+          end
+        end.sort_by { |(_name, meta)| meta[:first_line].to_i }
+      end
+
+      # Does this Ruby file define HER components? A cheap gate so the server
+      # never reads inline templates out of unrelated Ruby (a stray
+      # `template "..."` in some other DSL): true when the file is already a
+      # registered component file or names the definition mixin.
+      def her_ruby_file?(path, text)
+        !registry_entry_for(path).nil? || text.include?("Her::Component")
       end
 
       def diagnostic(line, column, message, severity)
@@ -200,6 +349,7 @@ module Her
       def completion(params)
         uri = params.dig("textDocument", "uri")
         text = @documents[uri] or return []
+        return [] unless region_at(uri, params["position"])
         prefix = text_before(text, params["position"])
         line_prefix = prefix[/[^\n]*\z/]
 
@@ -320,6 +470,7 @@ module Her
         uri = params.dig("textDocument", "uri")
         text = @documents[uri] or return nil
         position = params["position"]
+        return nil unless region_at(uri, position)
         line = text.lines[position["line"]] or return nil
         character = position["character"]
 
@@ -336,10 +487,25 @@ module Her
       def registry_entry_for(path)
         Her.component_modules.each do |mod|
           mod.__her_registry.each do |name, meta|
-            return [mod, name, meta] if meta[:template_path] == path
+            # template_path matches file-backed (.her) templates; file matches
+            # those plus inline templates, whose origin file is the .rb source.
+            return [mod, name, meta] if meta[:template_path] == path || meta[:file] == path
           end
         end
         nil
+      end
+
+      # The template region a position is inside, or nil. A .her document is a
+      # single implicit region (the whole file), so its features are never
+      # gated; a .rb document exposes one region per inline template, and a
+      # position outside them all (plain Ruby) resolves to nil — that's what
+      # keeps completion/hover/definition inert in the surrounding code.
+      def region_at(uri, position)
+        path = LSP.uri_to_path(uri)
+        return :whole unless path.end_with?(".rb")
+        text = @documents[uri] or return nil
+        return nil unless her_ruby_file?(path, text)
+        RubyTemplates.regions(text).find { |r| r.cover?(position["line"]) }
       end
 
       # Registries to search: the module owning this file first, then all.

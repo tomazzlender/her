@@ -244,6 +244,167 @@ class LspTest < Minitest::Test
     assert_empty note.dig("params", "diagnostics")
   end
 
+  # -- inline templates in .rb files -----------------------------------------------
+
+  # Writes a unique HER component module to dir and returns its path. The body
+  # is indented to sit inside `module ... extend Her::Component`.
+  def inline_module_file(dir, body)
+    @inline_seq = (@inline_seq || 0) + 1
+    name = "Inline#{Process.pid}_#{@inline_seq}"
+    path = File.join(dir, "inline_#{@inline_seq}.rb")
+    File.write(path, "module #{name}\n  extend Her::Component\n#{body}\nend\n")
+    path
+  end
+
+  def test_inline_parse_error_maps_to_the_ruby_line
+    Dir.mktmpdir do |dir|
+      # No require: a live buffer with a broken inline template still diagnoses.
+      buffer = <<~RUBY
+        module Draft
+          extend Her::Component
+          component :oops do
+            template <<~HER
+              <div>
+                <span>x</div>
+              </div>
+            HER
+          end
+        end
+      RUBY
+      uri = "file://#{File.join(dir, 'draft.rb')}"
+      (note,) = open_doc(uri, buffer)
+      diag = note.dig("params", "diagnostics").first
+      assert diag, "expected a diagnostic for the broken inline template"
+      assert_equal 1, diag["severity"]
+      assert_match(/mismatched closing tag/, diag["message"])
+      assert_equal 5, diag.dig("range", "start", "line") # 0-based: the </div> line
+    end
+  end
+
+  def test_inline_single_line_template_error_gets_the_start_column_added
+    Dir.mktmpdir do |dir|
+      buffer = %(module Draft2\n  extend Her::Component\n  component :x do\n    template "<div></span>"\n  end\nend\n)
+      uri = "file://#{File.join(dir, 'draft2.rb')}"
+      (note,) = open_doc(uri, buffer)
+      diag = note.dig("params", "diagnostics").first
+      assert diag, "expected a diagnostic for the broken single-line inline template"
+      assert_equal 3, diag.dig("range", "start", "line")
+      # the column must be mapped past `    template "` to the real `</span>`
+      assert_equal buffer.lines[3].index("</span>"), diag.dig("range", "start", "character")
+    end
+  end
+
+  def test_repeated_diagnostics_do_not_leak_scratch_modules
+    Dir.mktmpdir do |dir|
+      path = inline_module_file(dir, <<~'BODY')
+          component :caller do
+            template "<.nowhere_to_be_seen/>"
+          end
+      BODY
+      require path
+      uri = "file://#{path}"
+      buffer = File.read(path)
+      baseline = Her.component_modules.size
+      5.times { open_doc(uri, buffer) }
+      assert_operator Her.component_modules.size, :<=, baseline,
+                      "compiling unsaved buffers must not leak scratch modules"
+      # the real module still resolves, so verify findings keep firing
+      (note,) = open_doc(uri, buffer)
+      messages = note.dig("params", "diagnostics").map { |d| d["message"] }
+      assert(messages.any? { |m| m.include?("nowhere_to_be_seen") })
+    end
+  end
+
+  def test_non_her_ruby_with_a_template_call_is_left_alone
+    Dir.mktmpdir do |dir|
+      buffer = %(def template(x) = x\ntemplate "<div></span>"\n) # unrelated DSL, no HER
+      uri = "file://#{File.join(dir, 'other.rb')}"
+      (note,) = open_doc(uri, buffer)
+      assert_empty note.dig("params", "diagnostics")
+    end
+  end
+
+  def test_inline_completion_hover_and_definition
+    Dir.mktmpdir do |dir|
+      path = inline_module_file(dir, <<~'BODY')
+          component :badge do
+            attr :text, :string, required: true
+            template %(<span class="badge">{@text}</span>)
+          end
+          component :panel do
+            attr :title, :string
+            template <<~HER
+              <section>
+                <.badge text={@title}/>
+              </section>
+            HER
+          end
+      BODY
+      require path
+      uri = "file://#{path}"
+      buffer = File.read(path)
+      open_doc(uri, buffer)
+
+      badge_line = buffer.lines.index { |l| l.include?("<.badge") }
+      tag_col = buffer.lines[badge_line].index("<.")
+
+      # completion right after "<." inside the heredoc region
+      (completion,) = request("textDocument/completion",
+                              "textDocument" => { "uri" => uri },
+                              "position" => { "line" => badge_line, "character" => tag_col + 2 })
+      assert_includes completion["result"].map { |i| i["label"] }, "badge"
+
+      # hover on <.badge shows its contract
+      (hover,) = request("textDocument/hover",
+                         "textDocument" => { "uri" => uri },
+                         "position" => { "line" => badge_line, "character" => tag_col + 2 })
+      assert_match(/`text` :string, required/, hover.dig("result", "contents", "value"))
+
+      # go-to-definition jumps back into the same Ruby file
+      (definition,) = request("textDocument/definition",
+                              "textDocument" => { "uri" => uri },
+                              "position" => { "line" => badge_line, "character" => tag_col + 2 })
+      assert_equal uri, definition.dig("result", "uri")
+    end
+  end
+
+  def test_inline_features_are_inert_outside_template_regions
+    Dir.mktmpdir do |dir|
+      path = inline_module_file(dir, <<~'BODY')
+          component :chip do
+            attr :x, :string
+            template "<span>{@x}</span>"
+          end
+      BODY
+      require path
+      uri = "file://#{path}"
+      buffer = File.read(path)
+      open_doc(uri, buffer)
+      ruby_line = buffer.lines.index { |l| l.include?("extend Her::Component") }
+      (completion,) = request("textDocument/completion",
+                              "textDocument" => { "uri" => uri },
+                              "position" => { "line" => ruby_line, "character" => 2 })
+      assert_equal [], completion["result"]
+    end
+  end
+
+  def test_inline_verify_finding_lands_on_the_call_line
+    Dir.mktmpdir do |dir|
+      path = inline_module_file(dir, <<~'BODY')
+          component :caller do
+            template "<.nowhere_to_be_seen/>"
+          end
+      BODY
+      require path
+      uri = "file://#{path}"
+      buffer = File.read(path)
+      (note,) = open_doc(uri, buffer)
+      messages = note.dig("params", "diagnostics").map { |d| d["message"] }
+      assert(messages.any? { |m| m.include?("nowhere_to_be_seen") },
+             "expected the inline call to an unknown component to be flagged")
+    end
+  end
+
   def test_exit_stops_the_loop
     input = StringIO.new
     Her::LSP.write_message(input, { "jsonrpc" => "2.0", "id" => 1, "method" => "initialize", "params" => {} })

@@ -752,9 +752,17 @@ entry point with `-r` and you get:
 - **hover**: the component's contract; **go-to-definition**: jumps to the
   `.her` file or the declaring Ruby line.
 
+All four work the same whether the template lives in a standalone `.her`
+file or **inline** in a Ruby component (`template <<~HER … HER`, `%(…)`, or
+a quoted string) — the server locates each inline template with Prism and
+maps diagnostics back to the right line and column in the `.rb` file.
+Completion, hover and definition stay inert in the surrounding Ruby code.
+
 Without `-r` it still provides syntax diagnostics. Saving a registered
-`.her` file hot-reloads it via `Her.reload_templates!`. Wire it up as a
-generic stdio language server for the `her` filetype in your editor.
+`.her` file hot-reloads it via `Her.reload_templates!`; inline templates
+reload with your code reloader (they live in Ruby). Wire it up as a generic
+stdio language server in your editor — attach it to both the `her` filetype
+and Ruby files to get inline-template support.
 
 ### Editor wiring
 

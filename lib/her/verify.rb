@@ -64,6 +64,20 @@ module Her
       component_module_map[mod] = true
     end
 
+    # @api private — drop a module registered only transiently (the LSP
+    # compiles unsaved buffers against scratch modules); without this they
+    # would shadow the real component in file-keyed registry lookups until
+    # GC happened to reclaim them.
+    def __deregister_component_module(mod)
+      map = component_module_map
+      return map.delete(mod) if map.respond_to?(:delete) # Ruby 3.3+
+
+      survivors = map.keys
+      survivors.delete(mod)
+      @component_module_map = ObjectSpace::WeakMap.new
+      survivors.each { |survivor| @component_module_map[survivor] = true }
+    end
+
     private
 
     def component_module_map

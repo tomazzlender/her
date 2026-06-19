@@ -7,7 +7,7 @@
   "license": "MIT",
   "engines": { "vscode": "^1.75.0" },
   "main": "./extension.js",
-  "activationEvents": ["onLanguage:her"],
+  "activationEvents": ["onLanguage:her", "onLanguage:ruby"],
   "contributes": {
     "languages": [
       {

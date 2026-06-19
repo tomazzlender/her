@@ -25,6 +25,11 @@ Two things to wire per editor:
    attrs with types, slots), hover, and go-to-definition. Saving a
    registered `.her` file hot-reloads it.
 
+The same features also work for **inline** templates (`template <<~HER`,
+`%(…)`, or quoted strings) written directly in Ruby component files — point
+your client at Ruby buffers as well as `.her` files (the snippets below do).
+The bundled VS Code extension already attaches to both.
+
 The server reads from the workspace root, so relative `-r` paths and
 relative template paths resolve per-project.
 
@@ -68,8 +73,9 @@ vim.filetype.add({ extension = { her = "her" } })
 -- approximate highlighting: parse HER as HTML
 vim.treesitter.language.register("html", "her")
 
+-- "ruby" too, so inline `template <<~HER`/`%(...)` templates are served
 vim.api.nvim_create_autocmd("FileType", {
-  pattern = "her",
+  pattern = { "her", "ruby" },
   callback = function(args)
     vim.lsp.start({
       name = "her",
