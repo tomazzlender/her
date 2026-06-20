@@ -191,12 +191,13 @@ module Her
       # Public so the server can be driven directly in tests.
       def handle(message)
         method = message["method"]
+        return [] if method.nil? # a response to a server-initiated request (registerCapability)
         id = message["id"]
         params = message["params"] || {}
 
         case method
         when "initialize"        then [response(id, initialize_result)]
-        when "initialized"       then load_error_messages
+        when "initialized"       then register_file_watcher + load_error_messages
         when "shutdown"          then [response(id, nil)]
         when "exit"              then @exit = true; []
         when "textDocument/didOpen"
@@ -216,6 +217,7 @@ module Her
           uri = params.dig("textDocument", "uri")
           @documents.delete(uri)
           [notification("textDocument/publishDiagnostics", "uri" => uri, "diagnostics" => [])]
+        when "workspace/didChangeWatchedFiles" then refresh_watched_files
         when "textDocument/completion"        then [response(id, completion(params))]
         when "textDocument/hover"             then [response(id, hover(params))]
         when "textDocument/definition"        then [response(id, definition(params))]
@@ -278,6 +280,23 @@ module Her
       def load_error_messages
         return [] unless @load_error
         [notification("window/showMessage", "type" => 1, "message" => @load_error)]
+      end
+
+      # Ask the editor to watch .her files so edits made outside the editor
+      # (git pull, a generator, another tool) refresh the server's view —
+      # the registry is otherwise only as fresh as the -r boot plus in-editor
+      # saves. A server-initiated request; the client's response carries no
+      # method and is ignored by handle.
+      def register_file_watcher
+        [{
+          "jsonrpc" => "2.0", "id" => "her-watched-files", "method" => "client/registerCapability",
+          "params" => {
+            "registrations" => [{
+              "id" => "her-watched-files", "method" => "workspace/didChangeWatchedFiles",
+              "registerOptions" => { "watchers" => [{ "globPattern" => "**/*.her" }] }
+            }]
+          }
+        }]
       end
 
       # -- diagnostics ----------------------------------------------------------
@@ -417,6 +436,23 @@ module Her
         Her.reload_templates!(entry[0]) if entry
       rescue StandardError
         nil # compile problems show up as diagnostics instead
+      end
+
+      # A watched .her file changed on disk: recompile file-backed templates so
+      # their contracts/calls are current, then re-diagnose open documents so
+      # cross-file findings (a callee whose required attrs changed, say) update
+      # without a restart. Each module reloads independently so one broken or
+      # deleted template can't block the rest. Scope: edits to *existing*
+      # file-backed templates — brand-new or removed components, and inline .rb
+      # templates, still need the app's code reloader (or a restart), since the
+      # registry is built by the -r require.
+      def refresh_watched_files
+        Her.component_modules.each do |mod|
+          Her.reload_templates!(mod)
+        rescue StandardError
+          nil # a deleted/now-broken template surfaces as a diagnostic, not a crash
+        end
+        @documents.keys.map { |uri| publish_diagnostics(uri, verify: true) }
       end
 
       # -- completion -----------------------------------------------------------

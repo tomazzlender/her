@@ -776,9 +776,14 @@ Completion, hover and definition stay inert in the surrounding Ruby code.
 
 Without `-r` it still provides syntax diagnostics. Saving a registered
 `.her` file hot-reloads it via `Her.reload_templates!`; inline templates
-reload with your code reloader (they live in Ruby). Wire it up as a generic
-stdio language server in your editor — attach it to both the `her` filetype
-and Ruby files to get inline-template support.
+reload with your code reloader (they live in Ruby). The server also asks the
+editor to watch `.her` files, so an edit made *outside* the editor (a `git
+pull`, a generator) refreshes those templates and re-checks open documents
+live — no restart. (Brand-new or deleted components, and inline `.rb`
+templates, still need the boot require to re-run, since the registry is built
+from your `-r` entry point.) Wire it up as a generic stdio language server in
+your editor — attach it to both the `her` filetype and Ruby files to get
+inline-template support.
 
 ### Editor wiring
 

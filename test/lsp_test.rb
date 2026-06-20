@@ -680,6 +680,48 @@ class LspTest < Minitest::Test
     end
   end
 
+  # -- watched files ---------------------------------------------------------------
+
+  def test_initialized_registers_a_her_file_watcher
+    msgs = notify("initialized")
+    reg = msgs.find { |m| m["method"] == "client/registerCapability" }
+    assert reg, "the server should register dynamic capabilities on `initialized`"
+    watched = reg.dig("params", "registrations").find { |r| r["method"] == "workspace/didChangeWatchedFiles" }
+    assert watched
+    globs = watched.dig("registerOptions", "watchers").map { |w| w["globPattern"] }
+    assert_includes globs, "**/*.her"
+  end
+
+  def test_response_to_a_server_request_is_ignored
+    assert_empty server.handle({ "jsonrpc" => "2.0", "id" => "her-watched-files", "result" => nil })
+  end
+
+  def test_watched_file_change_refreshes_cross_file_diagnostics
+    Dir.mktmpdir do |dir|
+      button = File.join(dir, "button.html.her")
+      File.write(button, "<%# attr :label, :string, required: true %>\n<button>{@label}</button>\n")
+      panel = File.join(dir, "panel.html.her")
+      File.write(panel, "<%# attr :x, :string %>\n<.button label={@x}/>\n")
+      _mod = Module.new { extend Her::Component }.tap { |m| m.embed_templates("*.html.her", dir: dir) }
+
+      panel_uri = "file://#{panel}"
+      (note,) = open_doc(panel_uri, File.read(panel))
+      assert_empty note.dig("params", "diagnostics"), "the call is valid to start"
+
+      # Add a new required attr to button on disk, the way `git pull` would.
+      File.write(button, "<%# attr :label, :string, required: true %>\n" \
+                         "<%# attr :size, :string, required: true %>\n" \
+                         "<button>{@label}</button>\n")
+      notes = notify("workspace/didChangeWatchedFiles",
+                     "changes" => [{ "uri" => "file://#{button}", "type" => 2 }])
+      panel_note = notes.find { |n| n.dig("params", "uri") == panel_uri }
+      assert panel_note, "open documents should be re-diagnosed after a watched change"
+      messages = panel_note.dig("params", "diagnostics").map { |d| d["message"] }
+      assert(messages.any? { |m| m.include?("size") },
+             "the callee's new required attr should now be flagged at the call site")
+    end
+  end
+
   def test_exit_stops_the_loop
     input = StringIO.new
     Her::LSP.write_message(input, { "jsonrpc" => "2.0", "id" => 1, "method" => "initialize", "params" => {} })
