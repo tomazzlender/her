@@ -225,8 +225,17 @@ module Her
         when "workspace/symbol"               then [response(id, workspace_symbols(params))]
         when "textDocument/signatureHelp"     then [response(id, signature_help(params))]
         when "textDocument/formatting"        then [response(id, formatting(params))]
+        when "textDocument/onTypeFormatting"  then [response(id, on_type_formatting(params))]
+        when "textDocument/foldingRange"      then [response(id, folding_ranges(params))]
+        when "textDocument/selectionRange"    then [response(id, selection_ranges(params))]
+        when "textDocument/linkedEditingRange" then [response(id, linked_editing_ranges(params))]
+        when "textDocument/codeAction"        then [response(id, code_actions(params))]
+        when "textDocument/prepareCallHierarchy" then [response(id, prepare_call_hierarchy(params))]
+        when "callHierarchy/incomingCalls"    then [response(id, incoming_calls(params))]
+        when "callHierarchy/outgoingCalls"    then [response(id, outgoing_calls(params))]
         when "textDocument/prepareRename"     then [response(id, prepare_rename(params))]
         when "textDocument/rename"            then [response(id, rename(params))]
+        when "workspace/willRenameFiles"      then [response(id, will_rename_files(params))]
         when "workspace/executeCommand"       then [response(id, execute_command(params))]
         else
           id ? [error_response(id, -32_601, "method not supported: #{method}")] : []
@@ -248,8 +257,19 @@ module Her
             "workspaceSymbolProvider" => true,
             "signatureHelpProvider" => { "triggerCharacters" => [" "] },
             "documentFormattingProvider" => true,
+            "foldingRangeProvider" => true,
+            "selectionRangeProvider" => true,
+            "linkedEditingRangeProvider" => true,
+            "callHierarchyProvider" => true,
+            "codeActionProvider" => true,
+            "documentOnTypeFormattingProvider" => { "firstTriggerCharacter" => ">" },
             "renameProvider" => { "prepareProvider" => true },
-            "executeCommandProvider" => { "commands" => ["her.showSource"] }
+            "executeCommandProvider" => { "commands" => ["her.showSource"] },
+            "workspace" => {
+              "fileOperations" => {
+                "willRename" => { "filters" => [{ "pattern" => { "glob" => "**/*.her" } }] }
+              }
+            }
           },
           "serverInfo" => { "name" => "her-lsp", "version" => Her::VERSION }
         }
@@ -852,6 +872,283 @@ module Her
         return nil unless resolved
         mod, name, _meta = resolved
         Her.generated_source(mod, name)
+      end
+
+      # -- willRenameFiles ------------------------------------------------------------
+
+      # Renaming `card.html.her` → `panel.html.her` in the explorer renames
+      # the component: rewrite every usage and the `component :card`
+      # declaration so the basename rule still holds. (The editor performs the
+      # file move itself; we only return the in-file edits.)
+      def will_rename_files(params)
+        changes = []
+        (params["files"] || []).each do |file|
+          old_path = LSP.uri_to_path(file["oldUri"])
+          new_path = LSP.uri_to_path(file["newUri"])
+          next unless old_path.end_with?(".her") && new_path.end_with?(".her")
+          old_name = component_basename(old_path)
+          new_name = component_basename(new_path)
+          next if old_name == new_name || !new_name.match?(/\A[a-z_][a-zA-Z0-9_]*\z/)
+
+          target = nil
+          each_registered_component do |mod, name, meta|
+            target ||= [mod, name] if name.to_s == old_name && meta[:template_path] == old_path
+          end
+          next unless target
+
+          edits = Hash.new { |hash, key| hash[key] = [] }
+          component_usages(target[0], target[1]).each do |(path, line0, from, to)|
+            edits[LSP.path_to_uri(path)] << { "range" => point_range(line0, from, to), "newText" => new_name }
+          end
+          declaration_edits(old_name, new_name).each { |uri, list| edits[uri].concat(list) }
+          edits.each { |uri, list| changes << { "textDocument" => { "uri" => uri, "version" => nil }, "edits" => list.uniq } }
+        end
+        changes.empty? ? nil : { "documentChanges" => changes }
+      end
+
+      def component_basename(path)
+        File.basename(path).sub(/\.html\.her\z/, "").sub(/\.her\z/, "")
+      end
+
+      # -- folding / selection / linked editing ---------------------------------------
+
+      # All matched tag pairs in a document, with file-absolute positions for
+      # the open/close names and the whole-element span. Built from the
+      # tokenizer (so holes, strings and attributes are handled), then offset
+      # back onto the file (inline .rb regions included).
+      TagPair = Struct.new(:open_line, :open_name_from, :open_name_to, :open_tag_col,
+                           :close_line, :close_name_from, :close_name_to, :close_tag_end,
+                           keyword_init: true)
+
+      def document_tag_pairs(uri, text)
+        path = LSP.uri_to_path(uri)
+        pairs = []
+        template_sources(path, text).each do |(body, base_line, base_col)|
+          body_lines = body.lines
+          region_tag_pairs(body, path).each do |(open, close)|
+            pairs << build_tag_pair(open, close, body_lines, base_line, base_col)
+          end
+        end
+        pairs
+      end
+
+      def region_tag_pairs(body, path)
+        tokens = Tokenizer.new(body, file: path).tokenize
+        stack = []
+        pairs = []
+        tokens.each do |token|
+          next unless token.type == :tag_open || token.type == :tag_close
+          if token.type == :tag_open
+            stack.push(token) unless token.self_closing || token.void
+          else
+            open = stack.pop
+            pairs << [open, token] if open && open.kind == token.kind && open.name == token.name
+          end
+        end
+        pairs
+      rescue ParseError, CompileError
+        [] # a half-typed template just yields no structure for now
+      end
+
+      def build_tag_pair(open, close, body_lines, base_line, base_col)
+        line_offset = base_line - 1
+        open_off = open.line == 1 ? base_col : 0
+        close_off = close.line == 1 ? base_col : 0
+        open_name = tag_name_col(open, closing: false)
+        close_name = tag_name_col(close, closing: true)
+        close_text = body_lines[close.line - 1] || ""
+        gt = close_text.index(">", close_name + close.name.length) || (close.col - 1)
+        TagPair.new(
+          open_line: line_offset + (open.line - 1),
+          open_name_from: open_name + open_off, open_name_to: open_name + open.name.length + open_off,
+          open_tag_col: (open.col - 1) + open_off,
+          close_line: line_offset + (close.line - 1),
+          close_name_from: close_name + close_off, close_name_to: close_name + close.name.length + close_off,
+          close_tag_end: gt + 1 + close_off
+        )
+      end
+
+      # 0-based column of a tag's name within its line: `<`/`</` for HTML and
+      # remote, `<.`/`</.` for components, `<:`/`</:` for slots.
+      def tag_name_col(token, closing:)
+        prefix = case token.kind
+                 when :local, :slot then closing ? 3 : 2
+                 else closing ? 2 : 1
+                 end
+        (token.col - 1) + prefix
+      end
+
+      def folding_ranges(params)
+        uri = params.dig("textDocument", "uri")
+        text = @documents[uri] or return nil
+        document_tag_pairs(uri, text).filter_map do |pair|
+          next if pair.close_line - 1 <= pair.open_line
+          { "startLine" => pair.open_line, "endLine" => pair.close_line - 1 }
+        end
+      end
+
+      def linked_editing_ranges(params)
+        uri = params.dig("textDocument", "uri")
+        text = @documents[uri] or return nil
+        line0 = params.dig("position", "line")
+        character = params.dig("position", "character")
+        document_tag_pairs(uri, text).each do |pair|
+          on_open = pair.open_line == line0 && character >= pair.open_name_from && character <= pair.open_name_to
+          on_close = pair.close_line == line0 && character >= pair.close_name_from && character <= pair.close_name_to
+          next unless on_open || on_close
+          return { "ranges" => [point_range(pair.open_line, pair.open_name_from, pair.open_name_to),
+                                point_range(pair.close_line, pair.close_name_from, pair.close_name_to)] }
+        end
+        nil
+      end
+
+      def selection_ranges(params)
+        uri = params.dig("textDocument", "uri")
+        text = @documents[uri] or return nil
+        pairs = document_tag_pairs(uri, text)
+        (params["positions"] || []).map do |position|
+          enclosing = pairs.select { |pair| pair_encloses?(pair, position["line"], position["character"]) }
+          enclosing.sort_by! { |pair| [pair.close_line - pair.open_line, pair.close_tag_end - pair.open_tag_col] }
+          selection_chain(enclosing, position)
+        end
+      end
+
+      def pair_encloses?(pair, line, character)
+        after_open = line > pair.open_line || (line == pair.open_line && character >= pair.open_tag_col)
+        before_close = line < pair.close_line || (line == pair.close_line && character <= pair.close_tag_end)
+        after_open && before_close
+      end
+
+      # Nest enclosing spans (innermost first) into a SelectionRange chain whose
+      # `parent` links point outward; returns the innermost node.
+      def selection_chain(inner_first, position)
+        node = nil
+        inner_first.reverse_each do |pair|
+          range = { "start" => { "line" => pair.open_line, "character" => pair.open_tag_col },
+                    "end" => { "line" => pair.close_line, "character" => pair.close_tag_end } }
+          node = node ? { "range" => range, "parent" => node } : { "range" => range }
+        end
+        node || { "range" => point_range(position["line"], position["character"], position["character"]) }
+      end
+
+      # -- call hierarchy -------------------------------------------------------------
+
+      def prepare_call_hierarchy(params)
+        resolved = resolve_at(params) || component_declaration_at(params)
+        return nil unless resolved
+        [call_hierarchy_item(*resolved)]
+      end
+
+      def outgoing_calls(params)
+        item = params["item"] or return nil
+        resolved = component_from_item(item) or return nil
+        mod, _name, meta = resolved
+        (meta[:calls] || []).group_by { |call| call[:name] }.filter_map do |_callee, calls|
+          target = resolve_call(mod, calls.first) or next
+          { "to" => call_hierarchy_item(*target), "fromRanges" => calls.map { |call| call_from_range(meta, call) } }
+        end
+      end
+
+      def incoming_calls(params)
+        item = params["item"] or return nil
+        resolved = component_from_item(item) or return nil
+        target_mod, target_name, = resolved
+        callers = []
+        each_registered_component do |mod, name, meta|
+          hits = (meta[:calls] || []).select do |call|
+            resolved = resolve_call(mod, call)
+            resolved && resolved[0].equal?(target_mod) && resolved[1] == target_name
+          end
+          callers << { "from" => call_hierarchy_item(mod, name, meta), "fromRanges" => hits.map { |call| call_from_range(meta, call) } } unless hits.empty?
+        end
+        callers
+      end
+
+      def call_hierarchy_item(mod, name, meta)
+        { "name" => name.to_s, "kind" => 12, "detail" => Her.module_label(mod),
+          "uri" => LSP.path_to_uri(meta[:file]), "range" => symbol_point(meta), "selectionRange" => symbol_point(meta) }
+      end
+
+      def component_from_item(item)
+        path = LSP.uri_to_path(item["uri"])
+        name = item["name"].to_sym
+        each_registered_component do |mod, cname, meta|
+          return [mod, cname, meta] if cname == name && (meta[:file] == path || meta[:template_path] == path)
+        end
+        nil
+      end
+
+      def resolve_call(caller_mod, call)
+        if call[:kind] == :remote
+          receiver, _, func = call[:name].rpartition(".")
+          find_remote(receiver, func)
+        else
+          name = call[:name].to_sym
+          caller_mod.__her_registry.key?(name) ? [caller_mod, name, caller_mod.__her_registry[name]] : nil
+        end
+      end
+
+      def call_from_range(meta, call)
+        line0 = [meta[:first_line].to_i - 1 + (call[:line].to_i - 1), 0].max
+        point_range(line0, 0, 0)
+      end
+
+      # -- code actions ---------------------------------------------------------------
+
+      # Quick fixes built from diagnostics in range. Today: an unknown-component
+      # finding whose message already suggests a name ("did you mean <.x/>?")
+      # becomes a one-click rename of the misspelled call.
+      def code_actions(params)
+        uri = params.dig("textDocument", "uri")
+        text = @documents[uri] or return []
+        (params.dig("context", "diagnostics") || []).filter_map { |diag| unknown_component_fix(uri, text, diag) }
+      end
+
+      def unknown_component_fix(uri, text, diag)
+        message = diag["message"].to_s
+        suggested = message[%r{did you mean <\.([a-z_]\w*)/?>}, 1] or return nil
+        bad = message[%r{calls <\.([a-z_]\w*)/?>}, 1] or return nil
+        line0 = diag.dig("range", "start", "line")
+        line = text.lines[line0] or return nil
+        dot = line.index(".#{bad}") or return nil
+        name_col = dot + 1
+        {
+          "title" => "Change <.#{bad}/> to <.#{suggested}/>",
+          "kind" => "quickfix",
+          "diagnostics" => [diag],
+          "edit" => { "changes" => { uri => [{ "range" => point_range(line0, name_col, name_col + bad.length),
+                                               "newText" => suggested }] } }
+        }
+      end
+
+      # -- on-type formatting ---------------------------------------------------------
+
+      # Typing `>` to finish an opening tag inserts its matching close tag.
+      def on_type_formatting(params)
+        return nil unless params["ch"] == ">"
+        uri = params.dig("textDocument", "uri")
+        text = @documents[uri] or return nil
+        return nil unless region_at(uri, params["position"])
+        line0 = params.dig("position", "line")
+        character = params.dig("position", "character")
+        lines = text.lines
+        before = lines[0...line0].join + (lines[line0] || "")[0, character].to_s
+        insert = auto_close_for(before) or return nil
+        position = { "line" => line0, "character" => character }
+        [{ "range" => { "start" => position, "end" => position }, "newText" => insert }]
+      end
+
+      # The close tag for the open tag that `before` (text up to the cursor)
+      # just completed, or nil. Conservative: only fires for a clean
+      # `<tag …>` with no nested `<`/`>` (so holes/quoted `>` never misfire),
+      # and never for void, self-closing, or closing tags.
+      def auto_close_for(before)
+        match = before.match(%r{<(\.|:)?([a-zA-Z][\w.-]*)[^<>]*>\z}) or return nil
+        prefix = match[1]
+        name = match[2]
+        return nil if match[0].end_with?("/>")
+        return nil if prefix.nil? && Tokenizer::VOID_ELEMENTS.include?(name)
+        "</#{prefix}#{name}>"
       end
 
       # -- registry scan helpers ------------------------------------------------------

@@ -755,16 +755,20 @@ entry point with `-r` and you get:
 - **find references** and **document highlight**: every `<.name>` /
   `<Mod.name>` use of a component across the project;
 - **rename**: renames a component everywhere — usages, the `component :name`
-  declaration, and (for a file-backed component) its template file;
+  declaration, and (for a file-backed component) its template file; renaming
+  a `.her` file in the explorer rewrites the component to match;
 - **document & workspace symbols**: outline a file's components and their
   slots, or jump to any component by name (Cmd-T);
 - **format document**: runs the `her format` engine on `.her` files;
+- **call hierarchy**: which components a component renders, and who renders it;
+- **folding, selection range and linked editing** of tag pairs; **auto-close**
+  a tag when you type its `>`; **quick fixes** for a misspelled component;
 - **show generated Ruby** (`her.showSource` command / `her source`): open the
   code a component compiles to.
 
 The core navigation features (diagnostics, completion, hover, definition,
-signature help, references, rename) work the same whether the template lives
-in a standalone `.her`
+signature help, references, rename, folding, selection, linked editing, call
+hierarchy) work the same whether the template lives in a standalone `.her`
 file or **inline** in a Ruby component (`template <<~HER … HER`, `%(…)`, or
 a quoted string) — the server locates each inline template with Prism and
 maps diagnostics back to the right line and column in the `.rb` file.

@@ -569,6 +569,117 @@ class LspTest < Minitest::Test
     end
   end
 
+  # -- folding / selection / linked editing / call hierarchy / on-type / quickfix --
+
+  def test_folding_ranges_for_nested_tags
+    uri = "file:///tmp/fold.her"
+    open_doc(uri, "<div>\n  <span>\n    x\n  </span>\n</div>\n")
+    (resp,) = request("textDocument/foldingRange", "textDocument" => { "uri" => uri })
+    ranges = resp["result"]
+    assert(ranges.any? { |r| r["startLine"] == 0 && r["endLine"] == 3 }, "div should fold")
+    assert(ranges.any? { |r| r["startLine"] == 1 && r["endLine"] == 2 }, "span should fold")
+  end
+
+  def test_linked_editing_ranges_for_a_tag_pair
+    uri = "file:///tmp/le.her"
+    open_doc(uri, "<section>\n  hi\n</section>\n")
+    (resp,) = request("textDocument/linkedEditingRange",
+                      "textDocument" => { "uri" => uri }, "position" => { "line" => 0, "character" => 3 })
+    ranges = resp.dig("result", "ranges")
+    assert_equal 2, ranges.size
+    assert_equal({ "line" => 0, "character" => 1 }, ranges[0]["start"])
+    assert_equal({ "line" => 0, "character" => 8 }, ranges[0]["end"])
+    assert_equal 2, ranges[1]["start"]["line"]
+  end
+
+  def test_selection_range_expands_to_enclosing_tags
+    uri = "file:///tmp/sel.her"
+    open_doc(uri, "<div>\n  <span>x</span>\n</div>\n")
+    (resp,) = request("textDocument/selectionRange",
+                      "textDocument" => { "uri" => uri }, "positions" => [{ "line" => 1, "character" => 8 }])
+    node = resp["result"].first
+    assert_equal 1, node.dig("range", "start", "line") # innermost = the <span> element
+    assert_equal 0, node.dig("parent", "range", "start", "line") # parent = the <div>
+  end
+
+  def test_call_hierarchy_incoming_and_outgoing
+    Dir.mktmpdir do |dir|
+      path = inline_module_file(dir, <<~'BODY')
+          component :leaf do
+            template %(<span>leaf</span>)
+          end
+          component :branch do
+            template %(<div><.leaf/></div>)
+          end
+      BODY
+      require path
+      uri = "file://#{path}"
+      buf = File.read(path)
+      open_doc(uri, buf)
+
+      leaf_use = buf.lines.index { |l| l.include?("<.leaf/>") }
+      (prep,) = request("textDocument/prepareCallHierarchy",
+                        "textDocument" => { "uri" => uri }, "position" => { "line" => leaf_use, "character" => buf.lines[leaf_use].index("leaf") })
+      leaf_item = prep["result"].first
+      assert_equal "leaf", leaf_item["name"]
+
+      (inc,) = request("callHierarchy/incomingCalls", "item" => leaf_item)
+      assert_includes inc["result"].map { |c| c.dig("from", "name") }, "branch"
+
+      branch_decl = buf.lines.index { |l| l.include?("component :branch") }
+      (bprep,) = request("textDocument/prepareCallHierarchy",
+                         "textDocument" => { "uri" => uri }, "position" => { "line" => branch_decl, "character" => buf.lines[branch_decl].index("branch") })
+      (out,) = request("callHierarchy/outgoingCalls", "item" => bprep["result"].first)
+      assert_includes out["result"].map { |c| c.dig("to", "name") }, "leaf"
+    end
+  end
+
+  def test_on_type_formatting_auto_closes_a_tag
+    uri = "file:///tmp/ot.her"
+    open_doc(uri, "<section>")
+    (resp,) = request("textDocument/onTypeFormatting",
+                      "textDocument" => { "uri" => uri }, "position" => { "line" => 0, "character" => 9 }, "ch" => ">")
+    assert_equal "</section>", resp["result"].first["newText"]
+  end
+
+  def test_on_type_formatting_skips_void_elements
+    uri = "file:///tmp/ot2.her"
+    open_doc(uri, "<br>")
+    (resp,) = request("textDocument/onTypeFormatting",
+                      "textDocument" => { "uri" => uri }, "position" => { "line" => 0, "character" => 4 }, "ch" => ">")
+    assert_nil resp["result"]
+  end
+
+  def test_code_action_offers_unknown_component_fix
+    uri = "file:///tmp/ca.her"
+    open_doc(uri, "<.buton/>\n")
+    diag = { "range" => { "start" => { "line" => 0, "character" => 0 }, "end" => { "line" => 0, "character" => 1 } },
+             "message" => "calls <.buton/>, which is not defined — did you mean <.button/>?" }
+    (resp,) = request("textDocument/codeAction",
+                      "textDocument" => { "uri" => uri }, "context" => { "diagnostics" => [diag] })
+    action = resp["result"].first
+    assert_equal "quickfix", action["kind"]
+    edit = action.dig("edit", "changes", uri).first
+    assert_equal "button", edit["newText"]
+    assert_equal 2, edit.dig("range", "start", "character")
+    assert_equal 7, edit.dig("range", "end", "character")
+  end
+
+  def test_will_rename_files_rewrites_component_usages
+    Dir.mktmpdir do |dir|
+      _mod = project(dir)
+      old = File.join(dir, "layout.html.her")
+      new = File.join(dir, "shell.html.her")
+      (resp,) = request("workspace/willRenameFiles",
+                        "files" => [{ "oldUri" => "file://#{old}", "newUri" => "file://#{new}" }])
+      page_uri = "file://#{File.join(dir, 'page.html.her')}"
+      page_change = resp.dig("result", "documentChanges").find { |c| c.dig("textDocument", "uri") == page_uri }
+      assert page_change, "page.html.her usages of <.layout> should be rewritten"
+      assert_equal 2, page_change["edits"].size
+      assert(page_change["edits"].all? { |e| e["newText"] == "shell" })
+    end
+  end
+
   def test_exit_stops_the_loop
     input = StringIO.new
     Her::LSP.write_message(input, { "jsonrpc" => "2.0", "id" => 1, "method" => "initialize", "params" => {} })
